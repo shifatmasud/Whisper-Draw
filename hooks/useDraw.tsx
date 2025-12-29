@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -123,10 +124,10 @@ export const useDraw = (activeTool: Tool, toolSettings: ToolSettings) => {
   ) => {
     switch (activeTool) {
       case 'brush':
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
-        ctx.lineWidth = toolSettings.size;
-        ctx.strokeStyle = toolSettings.color;
+        ctx.lineJoin = toolSettings.lineJoin;
+        ctx.lineCap = toolSettings.lineCap;
+        ctx.lineWidth = toolSettings.strokeWidth;
+        ctx.strokeStyle = toolSettings.strokeColor;
         ctx.globalCompositeOperation = 'source-over';
         
         ctx.beginPath();
@@ -139,7 +140,9 @@ export const useDraw = (activeTool: Tool, toolSettings: ToolSettings) => {
 
       case 'eraser':
         ctx.globalCompositeOperation = 'destination-out';
-        ctx.lineWidth = toolSettings.size;
+        ctx.lineWidth = toolSettings.strokeWidth;
+        ctx.lineCap = toolSettings.lineCap;
+        ctx.lineJoin = toolSettings.lineJoin;
         
         ctx.beginPath();
         if (prevPoint) {
@@ -150,7 +153,7 @@ export const useDraw = (activeTool: Tool, toolSettings: ToolSettings) => {
         break;
 
       case 'fill':
-        floodFill(ctx, Math.round(currentPoint.x), Math.round(currentPoint.y), toolSettings.color);
+        floodFill(ctx, Math.round(currentPoint.x), Math.round(currentPoint.y), toolSettings.fillColor);
         break;
     }
   };

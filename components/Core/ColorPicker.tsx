@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -123,9 +124,11 @@ const ColorPicker: React.FC<ColorPickerProps> = ({ label, value, onChange, style
 
   return (
     <div onPointerDown={(e) => e.stopPropagation()}>
-      <label style={{ ...theme.Type.Readable.Label.S, display: 'block', marginBottom: theme.spacing['Space.S'], color: theme.Color.Base.Content[2] }}>
-        {label}
-      </label>
+      {label && (
+        <label style={{ ...theme.Type.Readable.Label.S, display: 'block', marginBottom: theme.spacing['Space.S'], color: theme.Color.Base.Content[2] }}>
+          {label}
+        </label>
+      )}
       <div ref={triggerRef} style={{ display: 'flex', gap: theme.spacing['Space.S'] }}>
         <motion.div style={swatchStyle} onClick={() => setIsOpen(!isOpen)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} />
         <input type="text" value={value} onChange={handleHexChange} style={inputStyle} placeholder="#000000" maxLength={7} />

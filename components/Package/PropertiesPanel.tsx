@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -7,6 +8,8 @@ import { useTheme } from '../../Theme.tsx';
 import { ToolSettings } from '../../types/index.tsx';
 import ColorPicker from '../Core/ColorPicker.tsx';
 import RangeSlider from '../Core/RangeSlider.tsx';
+import Select from '../Core/Select.tsx';
+import Toggle from '../Core/Toggle.tsx';
 import { useMotionValue } from 'framer-motion';
 
 interface PropertiesPanelProps {
@@ -17,31 +20,97 @@ interface PropertiesPanelProps {
 const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ toolSettings, onSettingChange }) => {
   const { theme } = useTheme();
   
-  const sizeValue = useMotionValue(toolSettings.size);
+  const strokeWidthValue = useMotionValue(toolSettings.strokeWidth);
 
   useEffect(() => {
-    const unsubscribe = sizeValue.onChange(v => onSettingChange('size', v));
+    const unsubscribe = strokeWidthValue.onChange(v => onSettingChange('strokeWidth', v));
     return unsubscribe;
-  }, [sizeValue, onSettingChange]);
+  }, [strokeWidthValue, onSettingChange]);
 
   useEffect(() => {
-      sizeValue.set(toolSettings.size);
-  }, [toolSettings.size, sizeValue]);
+      strokeWidthValue.set(toolSettings.strokeWidth);
+  }, [toolSettings.strokeWidth, strokeWidthValue]);
+
+  const groupStyle: React.CSSProperties = {
+    backgroundColor: theme.Color.Base.Surface[2], 
+    padding: theme.spacing['Space.M'], 
+    borderRadius: theme.radius['Radius.M'],
+    border: `1px solid ${theme.Color.Base.Surface[3]}`,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: theme.spacing['Space.S']
+  };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.L'] }}>
-      <ColorPicker
-        label="Color"
-        value={toolSettings.color}
-        onChange={(e) => onSettingChange('color', e.target.value)}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.M'] }}>
+      
+      {/* Stroke Section */}
+      <div style={groupStyle}>
+        <Toggle 
+            label="Stroke" 
+            isOn={toolSettings.strokeEnabled} 
+            onToggle={() => onSettingChange('strokeEnabled', !toolSettings.strokeEnabled)} 
+        />
+        {toolSettings.strokeEnabled && (
+            <ColorPicker
+                label=""
+                value={toolSettings.strokeColor}
+                onChange={(e) => onSettingChange('strokeColor', e.target.value)}
+            />
+        )}
+      </div>
+
+      {/* Fill Section */}
+      <div style={groupStyle}>
+        <Toggle 
+            label="Fill" 
+            isOn={toolSettings.fillEnabled} 
+            onToggle={() => onSettingChange('fillEnabled', !toolSettings.fillEnabled)} 
+        />
+        {toolSettings.fillEnabled && (
+            <ColorPicker
+                label=""
+                value={toolSettings.fillColor}
+                onChange={(e) => onSettingChange('fillColor', e.target.value)}
+            />
+        )}
+      </div>
+
       <RangeSlider
-        label="Brush Size"
-        motionValue={sizeValue}
-        onCommit={(v) => onSettingChange('size', v)}
+        label="Stroke Width"
+        motionValue={strokeWidthValue}
+        onCommit={(v) => onSettingChange('strokeWidth', v)}
         min={1}
         max={100}
       />
+
+      {/* Style Row */}
+      <div style={{ display: 'flex', gap: theme.spacing['Space.M'] }}>
+        <div style={{ flex: 1 }}>
+          <Select 
+            label="Line Cap"
+            value={toolSettings.lineCap}
+            onChange={(e) => onSettingChange('lineCap', e.target.value)}
+            options={[
+              { value: 'round', label: 'Round' },
+              { value: 'butt', label: 'Butt' },
+              { value: 'square', label: 'Square' },
+            ]}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <Select 
+            label="Line Join"
+            value={toolSettings.lineJoin}
+            onChange={(e) => onSettingChange('lineJoin', e.target.value)}
+            options={[
+              { value: 'round', label: 'Round' },
+              { value: 'bevel', label: 'Bevel' },
+              { value: 'miter', label: 'Miter' },
+            ]}
+          />
+        </div>
+      </div>
     </div>
   );
 };

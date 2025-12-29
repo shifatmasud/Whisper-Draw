@@ -34,10 +34,18 @@ export interface Layer {
 // --- Tooling ---
 export type Tool = 'brush' | 'eraser' | 'fill' | 'pen';
 
+export type LineCap = 'butt' | 'round' | 'square';
+export type LineJoin = 'bevel' | 'round' | 'miter';
+
 export interface ToolSettings {
-    color: string;
-    size: number;
+    strokeColor: string;
+    fillColor: string;
+    strokeWidth: number;
     opacity: number;
+    lineCap: LineCap;
+    lineJoin: LineJoin;
+    strokeEnabled: boolean;
+    fillEnabled: boolean;
 }
 
 // FIX: Add LogEntry type for console logs

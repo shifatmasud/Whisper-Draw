@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -32,14 +33,19 @@ const MetaPrototype = () => {
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('brush');
   const [toolSettings, setToolSettings] = useState<ToolSettings>({
-    color: '#000000', // Fixed default: black, theme-agnostic
-    size: 20,
+    strokeColor: '#000000',
+    fillColor: '#EF476F',
+    strokeWidth: 10,
     opacity: 1,
+    lineCap: 'round',
+    lineJoin: 'round',
+    strokeEnabled: true,
+    fillEnabled: false,
   });
 
   // --- Window Management ---
   const WINDOW_WIDTH = 320;
-  const PROPERTIES_PANEL_HEIGHT = 250;
+  const PROPERTIES_PANEL_HEIGHT = 480; // Increased height for stacked controls
   const ASSETS_PANEL_HEIGHT = 300;
   const LAYERS_PANEL_HEIGHT = 300;
 

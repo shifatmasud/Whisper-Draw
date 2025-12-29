@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -53,22 +54,19 @@ const Stage = forwardRef<StageHandle, StageProps>(({
               link.click();
           } else if (format === 'svg') {
               // Create a temporary hidden container in the DOM
-              // Two.js SVG renderer sometimes needs to be in DOM to compute styles correctly or to ensure namespaces are correct
               const tempDiv = document.createElement('div');
               tempDiv.style.position = 'absolute';
               tempDiv.style.top = '-9999px';
               tempDiv.style.left = '-9999px';
               document.body.appendChild(tempDiv);
 
-              // @ts-ignore - Two types definition might be missing specific constructor opts in some versions
+              // @ts-ignore
               const tempTwo = new Two({
                   type: Two.Types.svg,
                   width: twoRef.current.width,
                   height: twoRef.current.height,
               }).appendTo(tempDiv);
               
-              // Helper to deep clone with styles
-              // Default clone() often misses styles when moving between renderers or versions
               const deepClone = (node: any) => {
                   let clone;
                   if (node instanceof Two.Group) {
@@ -84,7 +82,7 @@ const Stage = forwardRef<StageHandle, StageProps>(({
                       clone.scale = node.scale;
                   } else {
                       clone = node.clone();
-                      // Manually Copy Path styles to ensure they carry over to SVG renderer
+                      // Manually Copy Path styles
                       clone.fill = node.fill;
                       clone.stroke = node.stroke;
                       clone.linewidth = node.linewidth;
@@ -101,7 +99,6 @@ const Stage = forwardRef<StageHandle, StageProps>(({
                       clone.rotation = node.rotation;
                       clone.scale = node.scale;
                   }
-                  
                   return clone;
               };
 
@@ -113,13 +110,10 @@ const Stage = forwardRef<StageHandle, StageProps>(({
                   }
               });
               
-              // Force update to generate SVG elements
               tempTwo.update();
               
-              // Extract SVG string
               const svgElement = tempDiv.querySelector('svg');
               if (svgElement) {
-                  // Ensure xmlns is present (Two.js usually adds it but let's be safe)
                   if (!svgElement.getAttribute('xmlns')) {
                       svgElement.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
                   }
@@ -135,8 +129,6 @@ const Stage = forwardRef<StageHandle, StageProps>(({
                   
                   URL.revokeObjectURL(url);
               }
-
-              // Cleanup
               document.body.removeChild(tempDiv);
           }
       }
@@ -178,7 +170,7 @@ const Stage = forwardRef<StageHandle, StageProps>(({
     };
   }, []);
 
-  // Cleanup Pen tool when switching tools
+  // Cleanup Pen tool
   useEffect(() => {
       if (activeTool !== 'pen') {
           cleanupPenHelpers();
@@ -186,6 +178,30 @@ const Stage = forwardRef<StageHandle, StageProps>(({
           penStartAnchorRef.current = null;
       }
   }, [activeTool]);
+
+  // Reactive Pen Path Update
+  // Ensures that changing tool settings while drawing immediately affects the active path.
+  useEffect(() => {
+    if (activeTool === 'pen' && penPathRef.current) {
+      const path = penPathRef.current;
+      
+      if (toolSettings.strokeEnabled) {
+          path.stroke = toolSettings.strokeColor;
+          path.linewidth = toolSettings.strokeWidth;
+      } else {
+          path.noStroke();
+      }
+
+      if (toolSettings.fillEnabled) {
+          path.fill = toolSettings.fillColor;
+      } else {
+          path.noFill();
+      }
+      
+      path.cap = toolSettings.lineCap;
+      path.join = toolSettings.lineJoin;
+    }
+  }, [toolSettings, activeTool]);
 
   const cleanupPenHelpers = () => {
       if (penHelpersRef.current && twoRef.current) {
@@ -257,19 +273,39 @@ const Stage = forwardRef<StageHandle, StageProps>(({
         handlePenDown(x, y, group);
     } else if (activeTool === 'fill') {
         const rectShape = new Two.Rectangle(twoRef.current.width / 2, twoRef.current.height / 2, twoRef.current.width, twoRef.current.height);
-        rectShape.fill = toolSettings.color;
+        rectShape.fill = toolSettings.fillColor;
         rectShape.noStroke();
         group.add(rectShape);
     } else {
         // Brush / Eraser
         setIsDrawing(true);
-        const color = activeTool === 'eraser' ? '#ffffff' : toolSettings.color;
         const path = new Two.Path([new Two.Anchor(x, y)], false, true);
-        path.noFill();
-        path.stroke = color;
-        path.linewidth = toolSettings.size;
-        path.cap = 'round';
-        path.join = 'round';
+        
+        if (activeTool === 'eraser') {
+            // Eraser always has white stroke, no fill
+            path.noFill();
+            path.stroke = '#ffffff';
+            path.cap = 'round';
+            path.linewidth = toolSettings.strokeWidth;
+        } else {
+            // Apply Stroke Settings
+            if (toolSettings.strokeEnabled) {
+                path.stroke = toolSettings.strokeColor;
+                path.linewidth = toolSettings.strokeWidth;
+            } else {
+                path.noStroke();
+            }
+
+            // Apply Fill Settings
+            if (toolSettings.fillEnabled) {
+                path.fill = toolSettings.fillColor;
+            } else {
+                path.noFill();
+            }
+            
+            path.cap = toolSettings.lineCap;
+            path.join = toolSettings.lineJoin;
+        }
         
         group.add(path);
         currentPathRef.current = path;
@@ -303,11 +339,22 @@ const Stage = forwardRef<StageHandle, StageProps>(({
   const handlePenDown = (x: number, y: number, activeGroup: Two.Group) => {
       if (!penPathRef.current) {
           const path = new Two.Path([], false, false, true);
-          path.noFill();
-          path.stroke = toolSettings.color;
-          path.linewidth = toolSettings.size;
-          path.cap = 'round';
-          path.join = 'round';
+          
+          if (toolSettings.strokeEnabled) {
+              path.stroke = toolSettings.strokeColor;
+              path.linewidth = toolSettings.strokeWidth;
+          } else {
+              path.noStroke();
+          }
+
+          if (toolSettings.fillEnabled) {
+              path.fill = toolSettings.fillColor;
+          } else {
+              path.noFill();
+          }
+
+          path.cap = toolSettings.lineCap;
+          path.join = toolSettings.lineJoin;
           
           activeGroup.add(path);
           penPathRef.current = path;
@@ -322,9 +369,18 @@ const Stage = forwardRef<StageHandle, StageProps>(({
       if (penStartAnchorRef.current) {
           const dx = x - penStartAnchorRef.current.x;
           const dy = y - penStartAnchorRef.current.y;
+          // Close path if clicked near start
           if (Math.hypot(dx, dy) < 20) {
               penPathRef.current.closed = true;
-              penPathRef.current.fill = toolSettings.color;
+              
+              // Ensure we re-apply correct styles on close
+              // This is critical if settings changed during the draw
+              if (toolSettings.fillEnabled) {
+                  penPathRef.current.fill = toolSettings.fillColor;
+              } else {
+                  penPathRef.current.noFill();
+              }
+
               cleanupPenHelpers();
               penPathRef.current = null;
               penStartAnchorRef.current = null;
