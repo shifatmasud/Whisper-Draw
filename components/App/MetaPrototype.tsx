@@ -2,13 +2,13 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useTheme } from '../../Theme.tsx';
 import ThemeToggleButton from '../Core/ThemeToggleButton.tsx';
 import FloatingWindow from '../Package/FloatingWindow.tsx';
 import Dock from '../Section/Dock.tsx';
-import Stage from '../Section/Stage.tsx';
+import Stage, { StageHandle } from '../Section/Stage.tsx';
 import PropertiesPanel from '../Package/PropertiesPanel.tsx';
 import AssetsPanel from '../Package/AssetsPanel.tsx';
 import LayersPanel from '../Package/LayersPanel.tsx';
@@ -21,6 +21,7 @@ import { WindowId, WindowState, Layer, Tool, ToolSettings, BlendMode } from '../
  */
 const MetaPrototype = () => {
   const { theme } = useTheme();
+  const stageRef = useRef<StageHandle>(null);
   
   // -- Drag State Management --
   const [isContentDragging, setIsContentDragging] = useState(false);
@@ -39,7 +40,7 @@ const MetaPrototype = () => {
   // --- Window Management ---
   const WINDOW_WIDTH = 320;
   const PROPERTIES_PANEL_HEIGHT = 250;
-  const ASSETS_PANEL_HEIGHT = 200;
+  const ASSETS_PANEL_HEIGHT = 300;
   const LAYERS_PANEL_HEIGHT = 300;
 
   const [windows, setWindows] = useState<Record<WindowId, WindowState>>({
@@ -141,6 +142,12 @@ const MetaPrototype = () => {
     setLayers(reorderedLayers);
   }, []);
 
+  const handleExport = useCallback((fileName: string, format: 'png' | 'svg') => {
+      if (stageRef.current) {
+          stageRef.current.exportImage(fileName, format);
+      }
+  }, []);
+
   // Memoize a reversed list for the rendering canvas, which needs bottom-to-top order.
   const reversedLayersForStage = useMemo(() => [...layers].reverse(), [layers]);
   
@@ -183,6 +190,7 @@ const MetaPrototype = () => {
       <Toolbar activeTool={activeTool} onToolSelect={setActiveTool} />
 
       <Stage
+        ref={stageRef}
         layers={reversedLayersForStage}
         activeLayerId={activeLayerId}
         activeTool={activeTool}
@@ -224,7 +232,7 @@ const MetaPrototype = () => {
             onClose={() => toggleWindow('assets')}
             onFocus={() => bringToFront('assets')}
           >
-            <AssetsPanel />
+            <AssetsPanel onExport={handleExport} />
           </FloatingWindow>
         )}
       </AnimatePresence>

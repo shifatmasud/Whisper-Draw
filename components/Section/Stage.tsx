@@ -1,9 +1,8 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useImperativeHandle, forwardRef } from 'react';
 import Two from 'two.js';
 import { useTheme } from '../../Theme.tsx';
 import { Layer, Tool, ToolSettings } from '../../types/index.tsx';
@@ -15,12 +14,16 @@ interface StageProps {
   toolSettings: ToolSettings;
 }
 
-const Stage: React.FC<StageProps> = ({ 
+export interface StageHandle {
+    exportImage: (name: string, format: 'png' | 'svg') => void;
+}
+
+const Stage = forwardRef<StageHandle, StageProps>(({ 
     layers, 
     activeLayerId,
     activeTool,
     toolSettings,
-}) => {
+}, ref) => {
   const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const twoRef = useRef<Two | null>(null);
@@ -33,14 +36,111 @@ const Stage: React.FC<StageProps> = ({
   const currentPathRef = useRef<Two.Path | null>(null);
 
   // --- Pen Tool State ---
-  // The path currently being constructed by the pen
   const penPathRef = useRef<Two.Path | null>(null);
-  // Group to hold visual helpers (vertices, handles) so they don't get baked into the layer
   const penHelpersRef = useRef<Two.Group | null>(null);
-  // Track if we are currently dragging to adjust handles
   const isPenDraggingRef = useRef(false);
-  // Track the start point for closing the path
   const penStartAnchorRef = useRef<Two.Anchor | null>(null);
+
+  // Expose export functionality
+  useImperativeHandle(ref, () => ({
+      exportImage: (name: string, format: 'png' | 'svg') => {
+          if (!twoRef.current) return;
+          
+          if (format === 'png') {
+              const link = document.createElement('a');
+              link.download = `${name}.png`;
+              link.href = twoRef.current.renderer.domElement.toDataURL('image/png');
+              link.click();
+          } else if (format === 'svg') {
+              // Create a temporary hidden container in the DOM
+              // Two.js SVG renderer sometimes needs to be in DOM to compute styles correctly or to ensure namespaces are correct
+              const tempDiv = document.createElement('div');
+              tempDiv.style.position = 'absolute';
+              tempDiv.style.top = '-9999px';
+              tempDiv.style.left = '-9999px';
+              document.body.appendChild(tempDiv);
+
+              // @ts-ignore - Two types definition might be missing specific constructor opts in some versions
+              const tempTwo = new Two({
+                  type: Two.Types.svg,
+                  width: twoRef.current.width,
+                  height: twoRef.current.height,
+              }).appendTo(tempDiv);
+              
+              // Helper to deep clone with styles
+              // Default clone() often misses styles when moving between renderers or versions
+              const deepClone = (node: any) => {
+                  let clone;
+                  if (node instanceof Two.Group) {
+                      clone = new Two.Group();
+                      for (const child of node.children) {
+                          clone.add(deepClone(child));
+                      }
+                      clone.opacity = node.opacity;
+                      clone.visible = node.visible;
+                      // Transforms
+                      clone.translation.copy(node.translation);
+                      clone.rotation = node.rotation;
+                      clone.scale = node.scale;
+                  } else {
+                      clone = node.clone();
+                      // Manually Copy Path styles to ensure they carry over to SVG renderer
+                      clone.fill = node.fill;
+                      clone.stroke = node.stroke;
+                      clone.linewidth = node.linewidth;
+                      clone.opacity = node.opacity;
+                      clone.visible = node.visible;
+                      clone.cap = node.cap;
+                      clone.join = node.join;
+                      clone.miter = node.miter;
+                      clone.closed = node.closed;
+                      clone.curved = node.curved;
+                      
+                      // Explicitly copy transforms
+                      clone.translation.copy(node.translation);
+                      clone.rotation = node.rotation;
+                      clone.scale = node.scale;
+                  }
+                  
+                  return clone;
+              };
+
+              // Clone active scene children (layers)
+              twoRef.current.scene.children.forEach((child) => {
+                  // Skip helper groups
+                  if (child !== penHelpersRef.current) {
+                      tempTwo.add(deepClone(child));
+                  }
+              });
+              
+              // Force update to generate SVG elements
+              tempTwo.update();
+              
+              // Extract SVG string
+              const svgElement = tempDiv.querySelector('svg');
+              if (svgElement) {
+                  // Ensure xmlns is present (Two.js usually adds it but let's be safe)
+                  if (!svgElement.getAttribute('xmlns')) {
+                      svgElement.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                  }
+                  
+                  const svgData = new XMLSerializer().serializeToString(svgElement);
+                  const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+                  const url = URL.createObjectURL(blob);
+                  
+                  const link = document.createElement('a');
+                  link.download = `${name}.svg`;
+                  link.href = url;
+                  link.click();
+                  
+                  URL.revokeObjectURL(url);
+              }
+
+              // Cleanup
+              document.body.removeChild(tempDiv);
+          }
+      }
+  }));
 
   // Initialize Two.js
   useEffect(() => {
@@ -64,7 +164,6 @@ const Stage: React.FC<StageProps> = ({
         two.width = container.clientWidth;
         two.height = container.clientHeight;
         two.renderer.setSize(container.clientWidth, container.clientHeight);
-        // Important: Update scene matrix if needed, but Two.js mostly handles this
     };
 
     window.addEventListener('resize', handleResize);
@@ -134,7 +233,7 @@ const Stage: React.FC<StageProps> = ({
         if (group) two.add(group);
     });
 
-    // Ensure Pen Helpers stay on top if they exist
+    // Ensure Pen Helpers stay on top
     if (penHelpersRef.current) {
         two.remove(penHelpersRef.current);
         two.add(penHelpersRef.current);
@@ -202,9 +301,8 @@ const Stage: React.FC<StageProps> = ({
   // --- Pen Tool Logic ---
 
   const handlePenDown = (x: number, y: number, activeGroup: Two.Group) => {
-      // 1. Check if we need to start a new path
       if (!penPathRef.current) {
-          const path = new Two.Path([], false, false, true); // open, no-curved (manual), manual commands
+          const path = new Two.Path([], false, false, true);
           path.noFill();
           path.stroke = toolSettings.color;
           path.linewidth = toolSettings.size;
@@ -214,7 +312,6 @@ const Stage: React.FC<StageProps> = ({
           activeGroup.add(path);
           penPathRef.current = path;
 
-          // Create helpers group on top of everything
           if (!penHelpersRef.current) {
               const helpers = new Two.Group();
               twoRef.current!.add(helpers);
@@ -222,15 +319,12 @@ const Stage: React.FC<StageProps> = ({
           }
       }
 
-      // 2. Check for closing path (Tap on start point)
-      // Standard touch hit radius ~20px
       if (penStartAnchorRef.current) {
           const dx = x - penStartAnchorRef.current.x;
           const dy = y - penStartAnchorRef.current.y;
           if (Math.hypot(dx, dy) < 20) {
               penPathRef.current.closed = true;
-              penPathRef.current.fill = toolSettings.color; // Optionally fill when closed
-              // Finish path
+              penPathRef.current.fill = toolSettings.color;
               cleanupPenHelpers();
               penPathRef.current = null;
               penStartAnchorRef.current = null;
@@ -238,7 +332,6 @@ const Stage: React.FC<StageProps> = ({
           }
       }
 
-      // 3. Add new anchor
       const anchor = new Two.Anchor(x, y, 0, 0, 0, 0, Two.Commands.curve);
       penPathRef.current.vertices.push(anchor);
       
@@ -246,7 +339,6 @@ const Stage: React.FC<StageProps> = ({
           penStartAnchorRef.current = anchor;
       }
 
-      // 4. Add visual helpers (Vertex circle)
       if (penHelpersRef.current) {
           const circle = new Two.Circle(x, y, 5);
           circle.fill = theme.Color.Focus.Content[1];
@@ -254,47 +346,23 @@ const Stage: React.FC<StageProps> = ({
           penHelpersRef.current.add(circle);
       }
 
-      // 5. Start dragging handles
       isPenDraggingRef.current = true;
   };
 
   const handlePenMove = (x: number, y: number) => {
       if (!isPenDraggingRef.current || !penPathRef.current) return;
-      
-      // Get the last anchor (active one)
       const vertices = penPathRef.current.vertices;
       const activeAnchor = vertices[vertices.length - 1];
-      
-      // Calculate delta from anchor center
       const dx = x - activeAnchor.x;
       const dy = y - activeAnchor.y;
-
-      // Update Bezier controls (mirrored for smooth curve)
       activeAnchor.controls.right.x = dx;
       activeAnchor.controls.right.y = dy;
       activeAnchor.controls.left.x = -dx;
       activeAnchor.controls.left.y = -dy;
-
-      // Visual feedback for handles
-      updatePenHelpers(activeAnchor);
   };
 
   const handlePenUp = () => {
       isPenDraggingRef.current = false;
-  };
-
-  const updatePenHelpers = (anchor: Two.Anchor) => {
-      if (!penHelpersRef.current) return;
-      
-      // Clear previous handle lines for this anchor (simplified: clear lines, keep dots)
-      // A more robust way would be to track handle IDs, but for MVP we can redraw handles 
-      // or just trust the user sees the curve changing.
-      
-      // Let's add a visual line for the handle being dragged to give feedback
-      // We'll tag it to remove it next frame or just pile them up (Two.js is fast, but better to be clean)
-      
-      // For this implementation, the changing curve itself is the best feedback. 
-      // The blue dots show where the vertices are.
   };
 
   return (
@@ -317,6 +385,6 @@ const Stage: React.FC<StageProps> = ({
         onPointerLeave={handlePointerUp}
     />
   );
-};
+});
 
 export default Stage;
