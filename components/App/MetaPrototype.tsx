@@ -13,7 +13,7 @@ import PropertiesPanel from '../Package/PropertiesPanel.tsx';
 import AssetsPanel from '../Package/AssetsPanel.tsx';
 import LayersPanel from '../Package/LayersPanel.tsx';
 import Toolbar from '../Package/Toolbar.tsx';
-import { WindowId, WindowState, Layer, Tool, ToolSettings } from '../../types/index.tsx';
+import { WindowId, WindowState, Layer, Tool, ToolSettings, BlendMode } from '../../types/index.tsx';
 
 /**
  * 🎨 2D Texture Design Tool
@@ -27,7 +27,7 @@ const MetaPrototype = () => {
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('brush');
   const [toolSettings, setToolSettings] = useState<ToolSettings>({
-    color: theme.Color.Accent.Surface[1],
+    color: '#000000', // Fixed default: black, theme-agnostic
     size: 20,
     opacity: 1,
   });
@@ -92,6 +92,42 @@ const MetaPrototype = () => {
     setToolSettings(prev => ({...prev, [key]: value}));
   };
 
+  const handleDeleteLayer = (id: string) => {
+    setLayers(prev => {
+      const newLayers = prev.filter(l => l.id !== id);
+      // If the active layer was deleted, select the top-most layer if it exists
+      if (activeLayerId === id) {
+        setActiveLayerId(newLayers.length > 0 ? newLayers[newLayers.length - 1].id : null);
+      }
+      return newLayers;
+    });
+  };
+
+  const handleDuplicateLayer = (id: string) => {
+    setLayers(prev => {
+      const layerIndex = prev.findIndex(l => l.id === id);
+      if (layerIndex === -1) return prev;
+      const originalLayer = prev[layerIndex];
+      const newLayer: Layer = {
+        ...originalLayer,
+        id: `layer-${Date.now()}`,
+        name: `${originalLayer.name} Copy`,
+      };
+      const newLayers = [...prev];
+      newLayers.splice(layerIndex + 1, 0, newLayer);
+      setActiveLayerId(newLayer.id);
+      return newLayers;
+    });
+  };
+
+  const handleUpdateLayerProperty = (id: string, properties: Partial<Layer>) => {
+    setLayers(prev => prev.map(l => l.id === id ? { ...l, ...properties } : l));
+  };
+
+  const handleReorderLayers = (reorderedLayers: Layer[]) => {
+    setLayers(reorderedLayers);
+  };
+
   return (
     <div style={{
       width: '100vw',
@@ -141,6 +177,10 @@ const MetaPrototype = () => {
               activeLayerId={activeLayerId}
               onAddLayer={handleAddLayer}
               onSelectLayer={handleSelectLayer}
+              onDeleteLayer={handleDeleteLayer}
+              onDuplicateLayer={handleDuplicateLayer}
+              onUpdateLayerProperty={handleUpdateLayerProperty}
+              onReorderLayers={handleReorderLayers}
             />
           </FloatingWindow>
         )}

@@ -12,9 +12,10 @@ interface RangeSliderProps {
   onCommit: (value: number) => void;
   min?: number;
   max?: number;
+  trackBackground?: string;
 }
 
-const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit, min = 0, max = 100 }) => {
+const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit, min = 0, max = 100, trackBackground }) => {
   const { theme } = useTheme();
   const trackRef = useRef<HTMLDivElement>(null);
   const [internalValue, setInternalValue] = useState(motionValue.get());
@@ -104,10 +105,11 @@ const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit,
                 height: '6px', 
                 backgroundColor: theme.Color.Base.Surface[3], 
                 borderRadius: '3px',
-                overflow: 'visible' 
+                overflow: 'visible',
+                background: trackBackground // Optional custom background
             }}>
-                {/* Fill Bar */}
-                <div style={{ 
+                {/* Fill Bar (Only show if no custom background) */}
+                {!trackBackground && <div style={{ 
                     position: 'absolute', 
                     top: 0, 
                     left: 0, 
@@ -115,7 +117,7 @@ const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit,
                     width: `${percentage}%`, 
                     backgroundColor: theme.Color.Accent.Surface[1], 
                     borderRadius: '3px' 
-                }} />
+                }} />}
                 
                 {/* Thumb */}
                 <div style={{
@@ -140,7 +142,7 @@ const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit,
           type="number"
           min={min}
           max={max}
-          value={internalValue}
+          value={Math.round(internalValue)}
           onChange={(e) => {
              const v = parseInt(e.target.value, 10) || 0;
              const clamped = Math.min(Math.max(v, min), max);

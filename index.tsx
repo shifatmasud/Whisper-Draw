@@ -6,7 +6,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ThemeProvider, useTheme } from './Theme.tsx';
 import { BreakpointProvider } from './hooks/useBreakpoint.tsx';
-import TextureEditor from './components/Page/Welcome.tsx';
+import TextureEditor from './components/Page/TextureEditor.tsx';
 
 function App() {
   const { theme } = useTheme();

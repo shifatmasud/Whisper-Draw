@@ -25,7 +25,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onToolSelect }) => {
         position: 'absolute',
         left: theme.spacing['Space.L'],
         top: '50%',
-        transform: 'translateY(-50%)',
+        y: '-50%', // Use motion's y for initial transform
         display: 'flex',
         flexDirection: 'column',
         gap: theme.spacing['Space.S'],
@@ -36,10 +36,16 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onToolSelect }) => {
         boxShadow: theme.effects['Effect.Shadow.Drop.3'],
         border: `1px solid ${theme.Color.Base.Surface[3]}`,
         zIndex: 1000,
+        cursor: 'grab',
     };
     
     return (
-        <div style={containerStyle}>
+        <motion.div 
+            style={containerStyle}
+            drag
+            dragMomentum={false}
+            whileDrag={{ cursor: 'grabbing' }}
+        >
             {TOOLS.map((tool) => (
                 <motion.button
                     key={tool.id}
@@ -64,7 +70,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onToolSelect }) => {
                     <i className={`ph-bold ${tool.icon}`} />
                 </motion.button>
             ))}
-        </div>
+        </motion.div>
     );
 };
 

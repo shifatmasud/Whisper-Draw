@@ -173,9 +173,9 @@ const Stage: React.FC<StageProps> = ({
             position: 'relative',
             width: 'clamp(300px, 80vw, 1024px)',
             height: 'clamp(300px, 80vh, 768px)',
-            backgroundColor: theme.Color.Base.Surface['2'],
+            backgroundColor: '#FFFFFF',
             borderRadius: theme.radius['Radius.L'],
-            boxShadow: theme.effects['Effect.Shadow.Inset.1'],
+            boxShadow: theme.effects['Effect.Shadow.Drop.3'],
             overflow: 'hidden',
             touchAction: 'none'
         }}
@@ -186,7 +186,7 @@ const Stage: React.FC<StageProps> = ({
     >
       <canvas 
         ref={canvasRef} 
-        style={{ display: 'block' }}
+        style={{ display: 'block', width: '100%', height: '100%' }}
       />
     </div>
   );

@@ -94,4 +94,3 @@ Imagine you have a digital drawing book. This project gives you all the tools to
 1.  Open the `index.html` file in a modern web browser.
 2.  That's it! The app will run.
 3.  Use the dock to open the Properties and Layers panels, select a tool, and start drawing!
-```

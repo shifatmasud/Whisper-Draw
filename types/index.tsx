@@ -16,12 +16,18 @@ export interface WindowState {
 }
 
 // --- Canvas & Layering ---
+export type BlendMode = 
+  | 'source-over' | 'multiply' | 'screen' | 'overlay' | 'darken' 
+  | 'lighten' | 'color-dodge' | 'color-burn' | 'hard-light' 
+  | 'soft-light' | 'difference' | 'exclusion' | 'hue' 
+  | 'saturation' | 'color' | 'luminosity';
+
 export interface Layer {
     id: string;
     name: string;
     isVisible: boolean;
     opacity: number;
-    blendMode: string;
+    blendMode: BlendMode;
 }
 
 // --- Tooling ---
