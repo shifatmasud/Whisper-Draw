@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useTheme } from '../../Theme.tsx';
 import ThemeToggleButton from '../Core/ThemeToggleButton.tsx';
@@ -22,7 +22,11 @@ import { WindowId, WindowState, Layer, Tool, ToolSettings, BlendMode } from '../
 const MetaPrototype = () => {
   const { theme } = useTheme();
   
+  // -- Drag State Management --
+  const [isContentDragging, setIsContentDragging] = useState(false);
+
   // -- Canvas & Tool State --
+  // Layers are now stored in visual order (top-to-bottom)
   const [layers, setLayers] = useState<Layer[]>([]);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('brush');
@@ -66,16 +70,20 @@ const MetaPrototype = () => {
 
   // --- Layer Management Callbacks ---
   const handleAddLayer = useCallback(() => {
-    const newLayer: Layer = {
-      id: `layer-${Date.now()}`,
-      name: `Layer ${layers.length + 1}`,
-      isVisible: true,
-      opacity: 1,
-      blendMode: 'source-over',
-    };
-    setLayers(prev => [...prev, newLayer]);
-    setActiveLayerId(newLayer.id);
-  }, [layers]);
+    const newLayerId = `layer-${Date.now()}`;
+    setLayers(prevLayers => {
+      const newLayer: Layer = {
+        id: newLayerId,
+        name: `Layer ${prevLayers.length + 1}`,
+        isVisible: true,
+        opacity: 1,
+        blendMode: 'source-over',
+      };
+      // Add new layers to the top of the list (index 0)
+      return [newLayer, ...prevLayers];
+    });
+    setActiveLayerId(newLayerId);
+  }, []);
 
   // Add initial layer on mount
   useEffect(() => {
@@ -84,26 +92,30 @@ const MetaPrototype = () => {
     }
   }, [layers.length, handleAddLayer]);
 
-  const handleSelectLayer = (id: string) => {
+  const handleSelectLayer = useCallback((id: string) => {
     setActiveLayerId(id);
-  };
+  }, []);
   
-  const handleToolSettingChange = (key: keyof ToolSettings, value: any) => {
+  const handleToolSettingChange = useCallback((key: keyof ToolSettings, value: any) => {
     setToolSettings(prev => ({...prev, [key]: value}));
-  };
+  }, []);
 
-  const handleDeleteLayer = (id: string) => {
-    setLayers(prev => {
-      const newLayers = prev.filter(l => l.id !== id);
-      // If the active layer was deleted, select the top-most layer if it exists
-      if (activeLayerId === id) {
-        setActiveLayerId(newLayers.length > 0 ? newLayers[newLayers.length - 1].id : null);
-      }
+  const handleDeleteLayer = useCallback((id: string) => {
+    setLayers(prevLayers => {
+      const newLayers = prevLayers.filter(l => l.id !== id);
+      // If the active layer was deleted, select the new top-most layer if it exists
+      setActiveLayerId(prevActiveId => {
+        if (prevActiveId === id) {
+          // In top-to-bottom order, the top-most layer is at index 0
+          return newLayers.length > 0 ? newLayers[0].id : null;
+        }
+        return prevActiveId;
+      });
       return newLayers;
     });
-  };
+  }, []);
 
-  const handleDuplicateLayer = (id: string) => {
+  const handleDuplicateLayer = useCallback((id: string) => {
     setLayers(prev => {
       const layerIndex = prev.findIndex(l => l.id === id);
       if (layerIndex === -1) return prev;
@@ -114,19 +126,47 @@ const MetaPrototype = () => {
         name: `${originalLayer.name} Copy`,
       };
       const newLayers = [...prev];
+      // Insert duplicate below the original
       newLayers.splice(layerIndex + 1, 0, newLayer);
       setActiveLayerId(newLayer.id);
       return newLayers;
     });
-  };
+  }, []);
 
-  const handleUpdateLayerProperty = (id: string, properties: Partial<Layer>) => {
+  const handleUpdateLayerProperty = useCallback((id: string, properties: Partial<Layer>) => {
     setLayers(prev => prev.map(l => l.id === id ? { ...l, ...properties } : l));
-  };
+  }, []);
 
-  const handleReorderLayers = (reorderedLayers: Layer[]) => {
+  const handleReorderLayers = useCallback((reorderedLayers: Layer[]) => {
     setLayers(reorderedLayers);
-  };
+  }, []);
+
+  // Memoize a reversed list for the rendering canvas, which needs bottom-to-top order.
+  const reversedLayersForStage = useMemo(() => [...layers].reverse(), [layers]);
+  
+  // --- Dragging Callbacks ---
+  const handleContentDragStart = useCallback(() => setIsContentDragging(true), []);
+  const handleContentDragEnd = useCallback(() => setIsContentDragging(false), []);
+
+  // --- Memoized Panel Content ---
+  const layersPanelContent = useMemo(() => (
+    <LayersPanel
+      layers={layers}
+      activeLayerId={activeLayerId}
+      onAddLayer={handleAddLayer}
+      onSelectLayer={handleSelectLayer}
+      onDeleteLayer={handleDeleteLayer}
+      onDuplicateLayer={handleDuplicateLayer}
+      onUpdateLayerProperty={handleUpdateLayerProperty}
+      onReorderLayers={handleReorderLayers}
+      onContentDragStart={handleContentDragStart}
+      onContentDragEnd={handleContentDragEnd}
+    />
+  ), [
+      layers, activeLayerId, handleAddLayer, handleSelectLayer, 
+      handleDeleteLayer, handleDuplicateLayer, handleUpdateLayerProperty, 
+      handleReorderLayers, handleContentDragStart, handleContentDragEnd
+  ]);
 
   return (
     <div style={{
@@ -143,7 +183,7 @@ const MetaPrototype = () => {
       <Toolbar activeTool={activeTool} onToolSelect={setActiveTool} />
 
       <Stage
-        layers={layers}
+        layers={reversedLayersForStage}
         activeLayerId={activeLayerId}
         activeTool={activeTool}
         toolSettings={toolSettings}
@@ -171,17 +211,9 @@ const MetaPrototype = () => {
             {...windows.layers}
             onClose={() => toggleWindow('layers')}
             onFocus={() => bringToFront('layers')}
+            isDraggable={!isContentDragging}
           >
-            <LayersPanel
-              layers={layers}
-              activeLayerId={activeLayerId}
-              onAddLayer={handleAddLayer}
-              onSelectLayer={handleSelectLayer}
-              onDeleteLayer={handleDeleteLayer}
-              onDuplicateLayer={handleDuplicateLayer}
-              onUpdateLayerProperty={handleUpdateLayerProperty}
-              onReorderLayers={handleReorderLayers}
-            />
+            {layersPanelContent}
           </FloatingWindow>
         )}
 

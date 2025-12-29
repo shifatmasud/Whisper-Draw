@@ -21,6 +21,7 @@ interface FloatingWindowProps {
   onFocus: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  isDraggable?: boolean;
 }
 
 const FloatingWindow: React.FC<FloatingWindowProps> = ({
@@ -32,6 +33,7 @@ const FloatingWindow: React.FC<FloatingWindowProps> = ({
   onFocus,
   children,
   footer,
+  isDraggable = true,
 }) => {
   const { theme } = useTheme();
   const dragControls = useDragControls();
@@ -45,9 +47,9 @@ const FloatingWindow: React.FC<FloatingWindowProps> = ({
     position: 'absolute',
     top: '50%',
     left: '50%',
-    width: '400px',
+    width: '320px',
     height: 'auto',
-    maxHeight: '600px',
+    maxHeight: '500px',
     backgroundColor: `${theme.Color.Base.Surface[1]}dd`,
     backdropFilter: 'blur(20px)',
     borderRadius: theme.radius['Radius.L'],
@@ -60,20 +62,20 @@ const FloatingWindow: React.FC<FloatingWindowProps> = ({
   };
 
   const headerStyle: React.CSSProperties = {
-    height: '48px',
+    height: '40px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: `0 ${theme.spacing['Space.L']}`,
+    padding: `0 ${theme.spacing['Space.M']}`,
     borderBottom: `1px solid ${theme.Color.Base.Surface[2]}`,
-    cursor: 'grab',
+    cursor: isDraggable ? 'grab' : 'default',
     userSelect: 'none',
     flexShrink: 0,
     touchAction: 'none',
   };
 
   const contentStyle: React.CSSProperties = {
-    padding: theme.spacing['Space.L'],
+    padding: theme.spacing['Space.M'],
     overflowY: 'auto',
     flex: 1,
     color: theme.Color.Base.Content[1],
@@ -81,13 +83,13 @@ const FloatingWindow: React.FC<FloatingWindowProps> = ({
   };
 
   const footerStyle: React.CSSProperties = {
-    height: '48px',
+    height: '40px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'flex-start',
-    padding: `0 ${theme.spacing['Space.L']}`,
+    padding: `0 ${theme.spacing['Space.M']}`,
     borderTop: `1px solid ${theme.Color.Base.Surface[2]}`,
-    cursor: 'grab',
+    cursor: isDraggable ? 'grab' : 'default',
     userSelect: 'none',
     backgroundColor: theme.Color.Base.Surface[2],
     flexShrink: 0,
@@ -100,16 +102,17 @@ const FloatingWindow: React.FC<FloatingWindowProps> = ({
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      drag
+      drag={true}
       dragListener={false}
       dragControls={dragControls}
       dragMomentum={false}
-      onPointerDown={() => onFocus()}
       transition={{ type: 'spring', damping: 28, stiffness: 320 }}
     >
       <div
         style={headerStyle}
         onPointerDown={(e) => {
+          if (!isDraggable) return;
+          onFocus();
           e.preventDefault();
           dragControls.start(e);
         }}
@@ -120,8 +123,8 @@ const FloatingWindow: React.FC<FloatingWindowProps> = ({
           <motion.button
             onClick={(e) => { e.stopPropagation(); onClose(); }}
             style={{
-              width: '14px',
-              height: '14px',
+              width: '12px',
+              height: '12px',
               borderRadius: '50%',
               backgroundColor: theme.Color.Error.Content[1],
               border: 'none',
@@ -135,23 +138,20 @@ const FloatingWindow: React.FC<FloatingWindowProps> = ({
           />
       </div>
       
-      <div
-        style={contentStyle}
-        onPointerDown={(e) => {
-          e.stopPropagation(); 
-        }}
-      >
+      <div style={contentStyle}>
         {children}
       </div>
 
       <div
         style={footerStyle}
         onPointerDown={(e) => {
+          if (!isDraggable) return;
+          onFocus();
           e.preventDefault();
           dragControls.start(e);
         }}
       >
-        {footer || <div style={{ width: '100%', height: '4px', borderRadius: '2px', backgroundColor: theme.Color.Base.Surface[3] }} />}
+        {footer}
       </div>
     </motion.div>
   );

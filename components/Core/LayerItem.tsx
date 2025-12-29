@@ -15,6 +15,9 @@ interface LayerItemProps {
     onDelete: (id: string) => void;
     onDuplicate: (id: string) => void;
     onUpdateProperty: (id: string, properties: Partial<Layer>) => void;
+    onDragStart: () => void;
+    onDragEnd: () => void;
+    isReordering?: boolean;
 }
 
 const BLEND_MODES: { value: BlendMode, label: string }[] = [
@@ -26,11 +29,24 @@ const BLEND_MODES: { value: BlendMode, label: string }[] = [
   { value: 'lighten', label: 'Lighten' },
 ];
 
-const LayerItem: React.FC<LayerItemProps> = ({ layer, isActive, onSelect, onDelete, onDuplicate, onUpdateProperty }) => {
+const LayerItem: React.FC<LayerItemProps> = React.memo(({ layer, isActive, onSelect, onDelete, onDuplicate, onUpdateProperty, onDragStart, onDragEnd, isReordering = false }) => {
     const { theme } = useTheme();
     const dragControls = useDragControls();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+    const [isDraggingThisItem, setIsDraggingThisItem] = useState(false);
+
+    const isOtherItemDragging = isReordering && !isDraggingThisItem;
+
+    const handleDragStartInternal = () => {
+        setIsDraggingThisItem(true);
+        onDragStart();
+    };
+    
+    const handleDragEndInternal = () => {
+        setIsDraggingThisItem(false);
+        onDragEnd();
+    };
 
     const itemStyle: React.CSSProperties = {
         display: 'flex',
@@ -44,7 +60,9 @@ const LayerItem: React.FC<LayerItemProps> = ({ layer, isActive, onSelect, onDele
         position: 'relative',
         cursor: 'pointer',
         userSelect: 'none',
-        transition: `background-color ${theme.time['Time.1x']} ease, border-color ${theme.time['Time.1x']} ease`,
+        transition: `background-color ${theme.time['Time.1x']} ease, border-color ${theme.time['Time.1x']} ease, opacity 0.2s ease`,
+        opacity: isOtherItemDragging ? 0.4 : 1,
+        pointerEvents: isOtherItemDragging ? 'none' : 'auto',
     };
     
     const handleMenuOpen = (e: React.MouseEvent) => {
@@ -77,6 +95,7 @@ const LayerItem: React.FC<LayerItemProps> = ({ layer, isActive, onSelect, onDele
         alignItems: 'center',
         justifyContent: 'center',
         transition: `background-color ${theme.time['Time.1x']} ease`,
+        flexShrink: 0,
     };
 
     return (
@@ -85,6 +104,8 @@ const LayerItem: React.FC<LayerItemProps> = ({ layer, isActive, onSelect, onDele
             dragListener={false}
             dragControls={dragControls}
             style={{ listStyle: 'none' }}
+            onDragStart={handleDragStartInternal}
+            onDragEnd={handleDragEndInternal}
         >
             <div 
                 style={itemStyle} 
@@ -93,10 +114,10 @@ const LayerItem: React.FC<LayerItemProps> = ({ layer, isActive, onSelect, onDele
                 {/* Drag Handle */}
                 <div 
                     onPointerDown={(e) => {
-                        e.preventDefault();
+                        e.stopPropagation();
                         dragControls.start(e);
                     }}
-                    style={{ ...iconStyle, cursor: 'grab' }}
+                    style={{ ...iconStyle, cursor: isOtherItemDragging ? 'default' : 'grab', touchAction: 'none' }}
                 >
                     <i className="ph-bold ph-dots-six-vertical" />
                 </div>
@@ -135,6 +156,6 @@ const LayerItem: React.FC<LayerItemProps> = ({ layer, isActive, onSelect, onDele
             {isMenuOpen && <ContextMenu items={menuItems} position={menuPosition} onClose={() => setIsMenuOpen(false)} />}
         </Reorder.Item>
     );
-};
+});
 
 export default LayerItem;

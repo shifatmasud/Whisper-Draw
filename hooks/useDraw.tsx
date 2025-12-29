@@ -54,9 +54,8 @@ export const useDraw = (activeTool: Tool, toolSettings: ToolSettings) => {
     while (pixelStack.length) {
         const newPos = pixelStack.pop();
         if (!newPos) continue;
-        // FIX: Use `let` for y-coordinate to allow modification within the loop.
-        const [x] = newPos;
-        let [, y] = newPos;
+        const x = newPos[0];
+        let y = newPos[1];
 
         let pixelPos = (y * width + x) * 4;
 

@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useTheme } from '../../Theme.tsx';
 import { Layer } from '../../types/index.tsx';
 import LayerItem from '../Core/LayerItem.tsx';
@@ -18,6 +18,8 @@ interface LayersPanelProps {
     onDuplicateLayer: (id: string) => void;
     onUpdateLayerProperty: (id: string, properties: Partial<Layer>) => void;
     onReorderLayers: (layers: Layer[]) => void;
+    onContentDragStart: () => void;
+    onContentDragEnd: () => void;
 }
 
 const LayersPanel: React.FC<LayersPanelProps> = ({ 
@@ -29,35 +31,53 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     onDuplicateLayer,
     onUpdateLayerProperty,
     onReorderLayers,
+    onContentDragStart,
+    onContentDragEnd,
 }) => {
     const { theme } = useTheme();
+    const [isReordering, setIsReordering] = useState(false);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-    // Visual Order: Top-to-Bottom (standard for layer lists)
-    // We reverse the underlying state (Bottom-to-Top) for display.
-    const displayLayers = useMemo(() => [...layers].reverse(), [layers]);
+    const handleDragStart = () => {
+        setIsReordering(true);
+        onContentDragStart();
+    };
 
-    const handleReorder = useCallback((newDisplayOrder: Layer[]) => {
-        // newDisplayOrder is Top -> Bottom.
-        // Convert back to Bottom -> Top for the logical rendering order.
-        const newRenderOrder = [...newDisplayOrder].reverse();
-        onReorderLayers(newRenderOrder);
-    }, [onReorderLayers]);
+    const handleDragEnd = () => {
+        setIsReordering(false);
+        onContentDragEnd();
+    };
+
+    // Temporarily disable scrolling on the container during drag to prevent conflict
+    useEffect(() => {
+        const scrollContainer = scrollContainerRef.current;
+        if (scrollContainer) {
+            scrollContainer.style.overflowY = isReordering ? 'hidden' : 'auto';
+        }
+    }, [isReordering]);
+
+    // The `layers` prop is now already in the correct visual order (top-to-bottom).
+    // No reversal logic is needed, which simplifies the component and fixes the bug.
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.M'] }}>
             {/* Scroll Wrapper: Reorder.Group often fails if it is its own scroll container */}
-            <div style={{ 
-                maxHeight: '350px', 
-                overflowY: 'auto', 
-                paddingRight: '4px',
-                paddingBottom: '8px',
-                scrollbarWidth: 'thin',
-                scrollbarColor: `${theme.Color.Base.Surface[3]} transparent`
-            }}>
+            <div 
+                ref={scrollContainerRef}
+                style={{ 
+                    maxHeight: '350px', 
+                    overflowY: 'auto', 
+                    paddingRight: '4px',
+                    paddingBottom: '8px',
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: `${theme.Color.Base.Surface[3]} transparent`,
+                    transition: 'overflow 0.2s' // Smooth transition for scrollbar visibility
+                }}
+            >
                 <Reorder.Group
                     axis="y"
-                    values={displayLayers}
-                    onReorder={handleReorder}
+                    values={layers}
+                    onReorder={onReorderLayers}
                     style={{
                         listStyle: 'none',
                         padding: 0,
@@ -67,7 +87,7 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                         gap: '4px'
                     }}
                 >
-                    {displayLayers.map(layer => (
+                    {layers.map(layer => (
                         <LayerItem
                             key={layer.id}
                             layer={layer}
@@ -76,6 +96,9 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
                             onDelete={onDeleteLayer}
                             onDuplicate={onDuplicateLayer}
                             onUpdateProperty={onUpdateLayerProperty}
+                            onDragStart={handleDragStart}
+                            onDragEnd={handleDragEnd}
+                            isReordering={isReordering}
                         />
                     ))}
                 </Reorder.Group>
