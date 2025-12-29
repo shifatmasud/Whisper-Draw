@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -31,7 +32,7 @@ export interface Layer {
 }
 
 // --- Tooling ---
-export type Tool = 'brush' | 'eraser' | 'fill';
+export type Tool = 'brush' | 'eraser' | 'fill' | 'pen';
 
 export interface ToolSettings {
     color: string;

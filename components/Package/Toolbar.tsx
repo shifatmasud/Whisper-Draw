@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -16,6 +17,7 @@ const TOOLS = [
     { id: 'brush' as Tool, icon: 'ph-paint-brush-broad', label: 'Brush' },
     { id: 'eraser' as Tool, icon: 'ph-eraser', label: 'Eraser' },
     { id: 'fill' as Tool, icon: 'ph-paint-bucket', label: 'Fill' },
+    { id: 'pen' as Tool, icon: 'ph-pen-nib', label: 'Pen' },
 ];
 
 const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onToolSelect }) => {
