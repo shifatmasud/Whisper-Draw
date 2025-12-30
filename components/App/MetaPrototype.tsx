@@ -14,7 +14,7 @@ import PropertiesPanel from '../Package/PropertiesPanel.tsx';
 import AssetsPanel from '../Package/AssetsPanel.tsx';
 import LayersPanel from '../Package/LayersPanel.tsx';
 import Toolbar from '../Package/Toolbar.tsx';
-import { WindowId, WindowState, Layer, Tool, ToolSettings, BlendMode } from '../../types/index.tsx';
+import { WindowId, WindowState, Layer, Tool, ToolSettings } from '../../types/index.tsx';
 
 /**
  * 🎨 2D Texture Design Tool
@@ -28,10 +28,9 @@ const MetaPrototype = () => {
   const [isContentDragging, setIsContentDragging] = useState(false);
 
   // -- Canvas & Tool State --
-  // Layers are now stored in visual order (top-to-bottom)
   const [layers, setLayers] = useState<Layer[]>([]);
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
-  const [activeTool, setActiveTool] = useState<Tool>('brush');
+  const [activeTool, setActiveTool] = useState<Tool>('select');
   const [toolSettings, setToolSettings] = useState<ToolSettings>({
     strokeColor: '#000000',
     fillColor: '#EF476F',
@@ -45,12 +44,12 @@ const MetaPrototype = () => {
 
   // --- Window Management ---
   const WINDOW_WIDTH = 320;
-  const PROPERTIES_PANEL_HEIGHT = 480; // Increased height for stacked controls
+  const PROPERTIES_PANEL_HEIGHT = 500;
   const ASSETS_PANEL_HEIGHT = 300;
   const LAYERS_PANEL_HEIGHT = 300;
 
   const [windows, setWindows] = useState<Record<WindowId, WindowState>>({
-    properties: { id: 'properties', title: 'Properties', isOpen: true, zIndex: 3, x: -WINDOW_WIDTH / 2, y: -PROPERTIES_PANEL_HEIGHT / 2 },
+    properties: { id: 'properties', title: 'Inspector', isOpen: true, zIndex: 3, x: -WINDOW_WIDTH / 2, y: -PROPERTIES_PANEL_HEIGHT / 2 },
     layers: { id: 'layers', title: 'Layers', isOpen: true, zIndex: 2, x: -WINDOW_WIDTH / 2, y: -LAYERS_PANEL_HEIGHT / 2 },
     assets: { id: 'assets', title: 'Assets', isOpen: false, zIndex: 1, x: -WINDOW_WIDTH / 2, y: -ASSETS_PANEL_HEIGHT / 2 },
   });
@@ -86,13 +85,11 @@ const MetaPrototype = () => {
         opacity: 1,
         blendMode: 'source-over',
       };
-      // Add new layers to the top of the list (index 0)
       return [newLayer, ...prevLayers];
     });
     setActiveLayerId(newLayerId);
   }, []);
 
-  // Add initial layer on mount
   useEffect(() => {
     if (layers.length === 0) {
       handleAddLayer();
@@ -110,10 +107,8 @@ const MetaPrototype = () => {
   const handleDeleteLayer = useCallback((id: string) => {
     setLayers(prevLayers => {
       const newLayers = prevLayers.filter(l => l.id !== id);
-      // If the active layer was deleted, select the new top-most layer if it exists
       setActiveLayerId(prevActiveId => {
         if (prevActiveId === id) {
-          // In top-to-bottom order, the top-most layer is at index 0
           return newLayers.length > 0 ? newLayers[0].id : null;
         }
         return prevActiveId;
@@ -133,7 +128,6 @@ const MetaPrototype = () => {
         name: `${originalLayer.name} Copy`,
       };
       const newLayers = [...prev];
-      // Insert duplicate below the original
       newLayers.splice(layerIndex + 1, 0, newLayer);
       setActiveLayerId(newLayer.id);
       return newLayers;
@@ -154,32 +148,11 @@ const MetaPrototype = () => {
       }
   }, []);
 
-  // Memoize a reversed list for the rendering canvas, which needs bottom-to-top order.
   const reversedLayersForStage = useMemo(() => [...layers].reverse(), [layers]);
+  const activeLayer = useMemo(() => layers.find(l => l.id === activeLayerId) || null, [layers, activeLayerId]);
   
-  // --- Dragging Callbacks ---
   const handleContentDragStart = useCallback(() => setIsContentDragging(true), []);
   const handleContentDragEnd = useCallback(() => setIsContentDragging(false), []);
-
-  // --- Memoized Panel Content ---
-  const layersPanelContent = useMemo(() => (
-    <LayersPanel
-      layers={layers}
-      activeLayerId={activeLayerId}
-      onAddLayer={handleAddLayer}
-      onSelectLayer={handleSelectLayer}
-      onDeleteLayer={handleDeleteLayer}
-      onDuplicateLayer={handleDuplicateLayer}
-      onUpdateLayerProperty={handleUpdateLayerProperty}
-      onReorderLayers={handleReorderLayers}
-      onContentDragStart={handleContentDragStart}
-      onContentDragEnd={handleContentDragEnd}
-    />
-  ), [
-      layers, activeLayerId, handleAddLayer, handleSelectLayer, 
-      handleDeleteLayer, handleDuplicateLayer, handleUpdateLayerProperty, 
-      handleReorderLayers, handleContentDragStart, handleContentDragEnd
-  ]);
 
   return (
     <div style={{
@@ -203,7 +176,6 @@ const MetaPrototype = () => {
         toolSettings={toolSettings}
       />
 
-      {/* --- WINDOWS --- */}
       <AnimatePresence>
         {windows.properties.isOpen && (
           <FloatingWindow
@@ -215,6 +187,8 @@ const MetaPrototype = () => {
             <PropertiesPanel
               toolSettings={toolSettings}
               onSettingChange={handleToolSettingChange}
+              activeLayer={activeLayer}
+              onLayerUpdate={handleUpdateLayerProperty}
             />
           </FloatingWindow>
         )}
@@ -227,7 +201,18 @@ const MetaPrototype = () => {
             onFocus={() => bringToFront('layers')}
             isDraggable={!isContentDragging}
           >
-            {layersPanelContent}
+            <LayersPanel
+              layers={layers}
+              activeLayerId={activeLayerId}
+              onAddLayer={handleAddLayer}
+              onSelectLayer={handleSelectLayer}
+              onDeleteLayer={handleDeleteLayer}
+              onDuplicateLayer={handleDuplicateLayer}
+              onUpdateLayerProperty={handleUpdateLayerProperty}
+              onReorderLayers={handleReorderLayers}
+              onContentDragStart={handleContentDragStart}
+              onContentDragEnd={handleContentDragEnd}
+            />
           </FloatingWindow>
         )}
 

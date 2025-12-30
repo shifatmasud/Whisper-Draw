@@ -32,7 +32,7 @@ export interface Layer {
 }
 
 // --- Tooling ---
-export type Tool = 'brush' | 'eraser' | 'fill' | 'pen';
+export type Tool = 'select' | 'brush' | 'eraser' | 'fill' | 'pen';
 
 export type LineCap = 'butt' | 'round' | 'square';
 export type LineJoin = 'bevel' | 'round' | 'miter';
@@ -46,6 +46,13 @@ export interface ToolSettings {
     lineJoin: LineJoin;
     strokeEnabled: boolean;
     fillEnabled: boolean;
+}
+
+// --- Engine Events ---
+export interface SelectionState {
+  layerId: string | null;
+  shapeId: string | null;
+  type: 'path' | 'group' | 'none';
 }
 
 // FIX: Add LogEntry type for console logs

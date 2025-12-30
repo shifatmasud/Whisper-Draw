@@ -14,6 +14,7 @@ interface ToolbarProps {
 }
 
 const TOOLS = [
+    { id: 'select' as Tool, icon: 'ph-cursor-click', label: 'Select' },
     { id: 'brush' as Tool, icon: 'ph-paint-brush-broad', label: 'Brush' },
     { id: 'eraser' as Tool, icon: 'ph-eraser', label: 'Eraser' },
     { id: 'fill' as Tool, icon: 'ph-paint-bucket', label: 'Fill' },
@@ -27,7 +28,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onToolSelect }) => {
         position: 'absolute',
         left: theme.spacing['Space.L'],
         top: '50%',
-        y: '-50%', // Use motion's y for initial transform
+        translateY: '-50%',
         display: 'flex',
         flexDirection: 'column',
         gap: theme.spacing['Space.S'],
