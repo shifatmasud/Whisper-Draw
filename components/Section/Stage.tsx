@@ -26,6 +26,8 @@ class CanvasEngine {
     activeLayerId: string | null = null;
     tool: Tool = 'select';
     settings: ToolSettings;
+    onToolChange?: (tool: Tool) => void;
+    onAnchorSelect?: (isSelected: boolean) => void;
     
     // Selection & Transform State
     selectedShape: Two.Shape | null = null;
@@ -94,10 +96,6 @@ class CanvasEngine {
         });
 
         // Reorder groups based on layers array (bottom to top for painting)
-        // layers prop is reversed (visual order top-to-bottom), so for painting we need 
-        // to ensure the first element in `layers` is painted last? 
-        // The Stage component reverses layers before passing to engine: `reversedLayersForStage`.
-        // So `layers[0]` is bottom, `layers[n]` is top. Correct.
         layers.forEach((l, index) => {
             const g = this.groups.get(l.id)!;
             // Z-index hack for Two.js: remove and add re-appends to end of list
@@ -199,17 +197,89 @@ class CanvasEngine {
         return { newAnchor, newV1Right, newV2Left };
     }
 
+    updateAnchorSelection(index: number) {
+        this.selectedAnchorIdx = index;
+        if (this.onAnchorSelect) {
+            this.onAnchorSelect(index !== -1);
+        }
+    }
+
+    finishPath() {
+        this.penPath = null;
+        this.updateAnchorSelection(-1);
+        this.cleanupPenHelpers();
+        this.penInteraction.mode = 'idle';
+    }
+
+    deleteSelectedAnchor() {
+        if (!this.penPath || this.selectedAnchorIdx === -1) return;
+        
+        this.penPath.vertices.splice(this.selectedAnchorIdx, 1);
+        
+        if (this.penPath.vertices.length === 0) {
+            this.penPath.remove();
+            this.penPath = null;
+            this.finishPath();
+        } else {
+             // Re-select nearest index
+             let newIdx = this.selectedAnchorIdx;
+             if (newIdx >= this.penPath.vertices.length) {
+                 newIdx = this.penPath.vertices.length - 1;
+             }
+             this.updateAnchorSelection(newIdx);
+             this.updatePenHelpers();
+        }
+    }
+
+    tryEnterEditMode(x: number, y: number): boolean {
+        if (!this.activeLayerId) return false;
+        const group = this.groups.get(this.activeLayerId);
+        if (!group) return false;
+
+        // Iterate backwards (top to bottom)
+        for (let i = group.children.length - 1; i >= 0; i--) {
+            const child = group.children[i];
+            if (child instanceof Two.Path) {
+                const bounds = child.getBoundingClientRect(true);
+                // Simple bounding box check
+                if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
+                     // Found a path to edit
+                     this.penPath = child;
+                     // Deselect current selection if any
+                     if (this.transformGroup) {
+                         this.two.remove(this.transformGroup);
+                         this.transformGroup = null;
+                         this.selectedShape = null;
+                     }
+                     
+                     // Trigger tool switch
+                     if (this.onToolChange) {
+                         this.onToolChange('pen');
+                     }
+                     // Show helpers immediately
+                     this.updatePenHelpers();
+                     return true;
+                }
+            }
+        }
+        return false;
+    }
+
     handleDown(x: number, y: number) {
         // Double Click Detection
         const now = Date.now();
         if (now - this.lastClickTime < 300) {
-            // Double Tap: Finish path
             if (this.tool === 'pen') {
-                this.penPath = null;
-                this.selectedAnchorIdx = -1;
-                this.cleanupPenHelpers();
+                // Double Tap in Pen mode: Finish path
+                this.finishPath();
                 this.lastClickTime = 0; // Reset
                 return;
+            } else if (this.tool === 'select') {
+                // Double Tap in Select mode: Enter Edit Path
+                if (this.tryEnterEditMode(x, y)) {
+                    this.lastClickTime = 0;
+                    return;
+                }
             }
         }
         this.lastClickTime = now;
@@ -313,12 +383,12 @@ class CanvasEngine {
                 if (Math.hypot(local.x - v.x, local.y - v.y) < HIT_RADIUS) {
                     if (i === 0 && this.penPath.vertices.length > 2 && !this.penPath.closed) {
                         this.penPath.closed = true;
-                        this.selectedAnchorIdx = -1; // Deselect on close
+                        this.updateAnchorSelection(-1); // Deselect on close
                         this.penPath = null; // Finish editing
                         this.cleanupPenHelpers();
                         return;
                     }
-                    this.selectedAnchorIdx = i;
+                    this.updateAnchorSelection(i);
                     this.penInteraction = { mode: 'dragging-anchor', dragStart: {x: local.x, y: local.y}, initialPos: {x: v.x, y: v.y} };
                     this.updatePenHelpers();
                     return;
@@ -338,7 +408,7 @@ class CanvasEngine {
                 const v = child.vertices[j];
                 if (Math.hypot(local.x - v.x, local.y - v.y) < HIT_RADIUS) {
                     this.penPath = child;
-                    this.selectedAnchorIdx = j;
+                    this.updateAnchorSelection(j);
                     this.penInteraction = { mode: 'dragging-anchor', dragStart: {x: local.x, y: local.y}, initialPos: {x: v.x, y: v.y} };
                     this.updatePenHelpers();
                     return;
@@ -384,7 +454,7 @@ class CanvasEngine {
                         // Insert
                         this.penPath.vertices.splice(j + 1, 0, newAnchor);
                         
-                        this.selectedAnchorIdx = j + 1;
+                        this.updateAnchorSelection(j + 1);
                         this.penInteraction = { mode: 'dragging-anchor', dragStart: {x: local.x, y: local.y}, initialPos: {x: newAnchor.x, y: newAnchor.y} };
                         this.updatePenHelpers();
                         return;
@@ -405,14 +475,14 @@ class CanvasEngine {
             this.penPath = path;
             const anchor = new Two.Anchor(x, y, 0,0,0,0, Two.Commands.curve);
             path.vertices.push(anchor);
-            this.selectedAnchorIdx = 0;
+            this.updateAnchorSelection(0);
             this.penInteraction = { mode: 'creating', dragStart: {x,y}, initialPos: {x,y} };
         } else {
             // Transform back to local space of penPath if it moved (though new path usually hasn't)
             const local = this.toLocal(this.penPath, x, y);
             const anchor = new Two.Anchor(local.x, local.y, 0,0,0,0, Two.Commands.curve);
             this.penPath.vertices.push(anchor);
-            this.selectedAnchorIdx = this.penPath.vertices.length - 1;
+            this.updateAnchorSelection(this.penPath.vertices.length - 1);
             this.penInteraction = { mode: 'creating', dragStart: {x: local.x, y: local.y}, initialPos: {x: local.x, y: local.y} };
         }
         this.updatePenHelpers();
@@ -521,10 +591,14 @@ interface StageProps {
   activeLayerId: string | null;
   activeTool: Tool;
   toolSettings: ToolSettings;
+  onToolChange?: (tool: Tool) => void;
+  onAnchorSelect?: (isSelected: boolean) => void;
 }
 
 export interface StageHandle {
     exportImage: (name: string, format: 'png' | 'svg') => void;
+    finishPath: () => void;
+    deleteSelectedAnchor: () => void;
 }
 
 const Stage = forwardRef<StageHandle, StageProps>(({ 
@@ -532,6 +606,8 @@ const Stage = forwardRef<StageHandle, StageProps>(({
     activeLayerId,
     activeTool,
     toolSettings,
+    onToolChange,
+    onAnchorSelect,
 }, ref) => {
   const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -557,6 +633,8 @@ const Stage = forwardRef<StageHandle, StageProps>(({
 
   useEffect(() => {
     if (engineRef.current) {
+        engineRef.current.onToolChange = onToolChange;
+        engineRef.current.onAnchorSelect = onAnchorSelect;
         engineRef.current.updateLayers(layers);
         engineRef.current.activeLayerId = activeLayerId;
         engineRef.current.tool = activeTool;
@@ -567,15 +645,18 @@ const Stage = forwardRef<StageHandle, StageProps>(({
             engineRef.current.updateSelectionHandles();
         }
 
+        // Only cleanup pen if we are NOT in pen mode. 
         if (activeTool !== 'pen') {
             engineRef.current.cleanupPenHelpers();
-            engineRef.current.penPath = null;
-            engineRef.current.selectedAnchorIdx = -1;
+            if (engineRef.current.tool !== 'pen') {
+                 engineRef.current.penPath = null;
+                 engineRef.current.updateAnchorSelection(-1);
+            }
         } else {
             engineRef.current.updatePenHelpers();
         }
     }
-  }, [layers, activeLayerId, activeTool, toolSettings]);
+  }, [layers, activeLayerId, activeTool, toolSettings, onToolChange, onAnchorSelect]);
 
   useImperativeHandle(ref, () => ({
       exportImage: (name: string, format: 'png' | 'svg') => {
@@ -588,8 +669,13 @@ const Stage = forwardRef<StageHandle, StageProps>(({
               link.click();
           } else if (format === 'svg') {
               // Two.js interpret logic would be needed here for SVG export 
-              // or using built-in renderer features
           }
+      },
+      finishPath: () => {
+          engineRef.current?.finishPath();
+      },
+      deleteSelectedAnchor: () => {
+          engineRef.current?.deleteSelectedAnchor();
       }
   }));
 
