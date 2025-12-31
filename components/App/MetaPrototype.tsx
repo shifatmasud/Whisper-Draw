@@ -88,6 +88,10 @@ const MetaPrototype = () => {
         isVisible: true,
         opacity: 1,
         blendMode: 'source-over',
+        x: 0,
+        y: 0,
+        scale: 1,
+        rotation: 0,
       };
       return [newLayer, ...prevLayers];
     });

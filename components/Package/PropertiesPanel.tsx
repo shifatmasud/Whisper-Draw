@@ -41,18 +41,22 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   // FIX: All hooks must be at the top level to avoid Error 310
   const strokeWidthValue = useMotionValue(toolSettings.strokeWidth);
   const opacityValue = useMotionValue(activeLayer ? activeLayer.opacity * 100 : 100);
+  const scaleValue = useMotionValue(activeLayer ? activeLayer.scale : 1);
+  const rotationValue = useMotionValue(activeLayer ? activeLayer.rotation : 0);
 
   // Sync stroke width motion value with props
   useEffect(() => {
     strokeWidthValue.set(toolSettings.strokeWidth);
   }, [toolSettings.strokeWidth, strokeWidthValue]);
 
-  // Sync opacity motion value when activeLayer changes
+  // Sync active layer property motion values when activeLayer changes
   useEffect(() => {
     if (activeLayer) {
       opacityValue.set(activeLayer.opacity * 100);
+      scaleValue.set(activeLayer.scale);
+      rotationValue.set(activeLayer.rotation);
     }
-  }, [activeLayer, opacityValue]);
+  }, [activeLayer, opacityValue, scaleValue, rotationValue]);
 
   const groupStyle: React.CSSProperties = {
     backgroundColor: theme.Color.Base.Surface[2], 
@@ -289,6 +293,40 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       onToggle={() => onLayerUpdate(activeLayer.id, { isVisible: !activeLayer.isVisible })}
                     />
                   </div>
+                  
+                  {/* Transform Controls */}
+                  <div style={groupStyle}>
+                      <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>TRANSFORM</label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.spacing['Space.S'] }}>
+                          <Input
+                              label="X Position"
+                              type="number"
+                              value={activeLayer.x.toString()}
+                              onChange={(e) => onLayerUpdate(activeLayer.id, { x: Number(e.target.value) || 0 })}
+                          />
+                          <Input
+                              label="Y Position"
+                              type="number"
+                              value={activeLayer.y.toString()}
+                              onChange={(e) => onLayerUpdate(activeLayer.id, { y: Number(e.target.value) || 0 })}
+                          />
+                      </div>
+                      <RangeSlider
+                          label="Scale"
+                          motionValue={scaleValue}
+                          min={0.1}
+                          max={3.0}
+                          onCommit={(v) => onLayerUpdate(activeLayer.id, { scale: v })}
+                      />
+                       <RangeSlider
+                          label="Rotation"
+                          motionValue={rotationValue}
+                          min={0}
+                          max={360}
+                          onCommit={(v) => onLayerUpdate(activeLayer.id, { rotation: v })}
+                      />
+                  </div>
+
                   <Select 
                     label="Blend Mode"
                     value={activeLayer.blendMode}

@@ -29,6 +29,11 @@ export interface Layer {
     isVisible: boolean;
     opacity: number;
     blendMode: BlendMode;
+    // Transforms
+    x: number;
+    y: number;
+    scale: number;
+    rotation: number;
 }
 
 // --- Tooling ---
