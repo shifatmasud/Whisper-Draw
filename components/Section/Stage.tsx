@@ -30,7 +30,8 @@ class CanvasEngine {
     onAnchorSelect?: (isSelected: boolean) => void;
     
     // Selection & Transform State
-    selectedShape: Two.Shape | null = null;
+    // selectedShape can be a Two.Shape or Two.Group
+    selectedShape: any | null = null; 
     transformGroup: Two.Group | null = null;
     
     // Interaction state
@@ -231,6 +232,20 @@ class CanvasEngine {
         }
     }
 
+    // New: Vector manipulation methods
+    setAnchorSharp() {
+        if (!this.penPath || this.selectedAnchorIdx === -1) return;
+        const v = this.penPath.vertices[this.selectedAnchorIdx];
+        v.controls.left.clear();
+        v.controls.right.clear();
+        this.updatePenHelpers();
+    }
+
+    setPathClosed(closed: boolean) {
+        if (!this.penPath) return;
+        this.penPath.closed = closed;
+    }
+
     tryEnterEditMode(x: number, y: number): boolean {
         if (!this.activeLayerId) return false;
         const group = this.groups.get(this.activeLayerId);
@@ -276,7 +291,7 @@ class CanvasEngine {
                 return;
             } else if (this.tool === 'select') {
                 // Double Tap in Select mode: Enter Edit Path
-                if (this.tryEnterEditMode(x, y)) {
+                if (this.settings.selectionMode === 'vector' && this.tryEnterEditMode(x, y)) {
                     this.lastClickTime = 0;
                     return;
                 }
@@ -290,36 +305,60 @@ class CanvasEngine {
 
         this.isInteracting = true;
 
-        if (this.tool === 'select') {
-            this.selectedShape = null;
-            for (let i = group.children.length - 1; i >= 0; i--) {
+        if (this.tool === 'delete') {
+            // Remove/Delete Tool
+             for (let i = group.children.length - 1; i >= 0; i--) {
                 const child = group.children[i];
                 if (!(child instanceof Two.Shape)) continue;
                 
                 const bounds = child.getBoundingClientRect(true);
                 if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
-                    this.selectedShape = child;
-                    this.dragOffset = { x: x - child.translation.x, y: y - child.translation.y };
+                    child.remove(); // Delete shape
                     break;
+                }
+            }
+        } else if (this.tool === 'select') {
+            this.selectedShape = null;
+
+            if (this.settings.selectionMode === 'layer') {
+                // Layer Selection Mode: Move the whole group
+                // Check if we hit anything in the layer group to assume we are clicking it
+                // We assume clicking an object in the layer selects the layer group
+                 for (let i = group.children.length - 1; i >= 0; i--) {
+                    const child = group.children[i];
+                    if (!(child instanceof Two.Shape)) continue;
+                    const bounds = child.getBoundingClientRect(true);
+                    if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
+                         // Hit something, select the group
+                         this.selectedShape = group;
+                         this.dragOffset = { x: x - group.translation.x, y: y - group.translation.y };
+                         break;
+                    }
+                }
+            } else {
+                // Vector Selection Mode: Select individual items
+                for (let i = group.children.length - 1; i >= 0; i--) {
+                    const child = group.children[i];
+                    if (!(child instanceof Two.Shape)) continue;
+                    
+                    const bounds = child.getBoundingClientRect(true);
+                    if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
+                        this.selectedShape = child;
+                        this.dragOffset = { x: x - child.translation.x, y: y - child.translation.y };
+                        break;
+                    }
                 }
             }
             this.updateSelectionHandles();
         } else if (this.tool === 'pen') {
             this.handlePenDown(x, y, group);
-        } else if (this.tool === 'brush' || this.tool === 'eraser') {
+        } else if (this.tool === 'brush') {
             const path = new Two.Path([new Two.Anchor(x, y)], false, true);
-            if (this.tool === 'eraser') {
-                path.noFill();
-                path.stroke = '#ffffff';
-                path.linewidth = this.settings.strokeWidth;
-                path.globalCompositeOperation = 'destination-out';
-            } else {
-                path.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : 'transparent';
-                path.linewidth = this.settings.strokeWidth;
-                path.fill = this.settings.fillEnabled ? this.settings.fillColor : 'transparent';
-                path.cap = this.settings.lineCap;
-                path.join = this.settings.lineJoin;
-            }
+            path.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : 'transparent';
+            path.linewidth = this.settings.strokeWidth;
+            path.fill = this.settings.fillEnabled ? this.settings.fillColor : 'transparent';
+            path.cap = this.settings.lineCap;
+            path.join = this.settings.lineJoin;
             group.add(path);
             this.currentPath = path;
         }
@@ -329,7 +368,7 @@ class CanvasEngine {
         if (this.tool === 'select' && this.selectedShape && this.isInteracting) {
             this.selectedShape.translation.set(x - this.dragOffset.x, y - this.dragOffset.y);
             this.updateSelectionHandles();
-        } else if (this.tool === 'brush' || this.tool === 'eraser') {
+        } else if (this.tool === 'brush') {
             if (this.isInteracting && this.currentPath) {
                 this.currentPath.vertices.push(new Two.Anchor(x, y));
             }
@@ -356,22 +395,27 @@ class CanvasEngine {
 
         // 1. Check handles of selected anchor first
         if (this.penPath && this.selectedAnchorIdx !== -1) {
-            const local = this.toLocal(this.penPath, x, y);
             const v = this.penPath.vertices[this.selectedAnchorIdx];
-            const lx = v.x + v.controls.left.x;
-            const ly = v.y + v.controls.left.y;
-            const rx = v.x + v.controls.right.x;
-            const ry = v.y + v.controls.right.y;
 
-            if (Math.hypot(local.x - lx, local.y - ly) < HIT_RADIUS) {
-                this.penInteraction = { mode: 'dragging-handle-left', dragStart: {x: local.x, y: local.y}, initialPos: {x: lx, y: ly} };
-                this.updatePenHelpers();
-                return;
-            }
-            if (Math.hypot(local.x - rx, local.y - ry) < HIT_RADIUS) {
-                this.penInteraction = { mode: 'dragging-handle-right', dragStart: {x: local.x, y: local.y}, initialPos: {x: rx, y: ry} };
-                this.updatePenHelpers();
-                return;
+            if (v) {
+                const local = this.toLocal(this.penPath, x, y);
+                const lx = v.x + v.controls.left.x;
+                const ly = v.y + v.controls.left.y;
+                const rx = v.x + v.controls.right.x;
+                const ry = v.y + v.controls.right.y;
+
+                if (Math.hypot(local.x - lx, local.y - ly) < HIT_RADIUS) {
+                    this.penInteraction = { mode: 'dragging-handle-left', dragStart: {x: local.x, y: local.y}, initialPos: {x: lx, y: ly} };
+                    this.updatePenHelpers();
+                    return;
+                }
+                if (Math.hypot(local.x - rx, local.y - ry) < HIT_RADIUS) {
+                    this.penInteraction = { mode: 'dragging-handle-right', dragStart: {x: local.x, y: local.y}, initialPos: {x: rx, y: ry} };
+                    this.updatePenHelpers();
+                    return;
+                }
+            } else {
+                this.updateAnchorSelection(-1);
             }
         }
 
@@ -492,6 +536,7 @@ class CanvasEngine {
         if (!this.penPath) return;
 
         const local = this.toLocal(this.penPath, x, y);
+        const handleMode = this.settings.penHandleMode;
         
         // Visual feedback when creating (drag out handles)
         if (this.penInteraction.mode === 'creating') {
@@ -516,14 +561,18 @@ class CanvasEngine {
                 const dx = lx - v.x;
                 const dy = ly - v.y;
                 v.controls.left.set(dx, dy);
-                v.controls.right.set(-dx, -dy); // Symmetric
+                if (handleMode === 'mirrored') {
+                    v.controls.right.set(-dx, -dy);
+                }
             } else if (this.penInteraction.mode === 'dragging-handle-right') {
                 const rx = this.penInteraction.initialPos.x + (local.x - this.penInteraction.dragStart.x);
                 const ry = this.penInteraction.initialPos.y + (local.y - this.penInteraction.dragStart.y);
                 const dx = rx - v.x;
                 const dy = ry - v.y;
                 v.controls.right.set(dx, dy);
-                v.controls.left.set(-dx, -dy); // Symmetric
+                if (handleMode === 'mirrored') {
+                    v.controls.left.set(-dx, -dy);
+                }
             }
             this.updatePenHelpers();
         }
@@ -599,6 +648,8 @@ export interface StageHandle {
     exportImage: (name: string, format: 'png' | 'svg') => void;
     finishPath: () => void;
     deleteSelectedAnchor: () => void;
+    setAnchorSharp: () => void;
+    setPathClosed: (closed: boolean) => void;
 }
 
 const Stage = forwardRef<StageHandle, StageProps>(({ 
@@ -668,7 +719,36 @@ const Stage = forwardRef<StageHandle, StageProps>(({
               link.href = engine.two.renderer.domElement.toDataURL('image/png');
               link.click();
           } else if (format === 'svg') {
-              // Two.js interpret logic would be needed here for SVG export 
+              const tempDiv = document.createElement('div');
+              const svgTwo = new Two({
+                  type: Two.Types.svg,
+                  width: engine.two.width,
+                  height: engine.two.height
+              }).appendTo(tempDiv);
+      
+              // Clone scene content groups
+              engine.groups.forEach((group) => {
+                   // Clone method is available on Two.Group
+                   // We cast to any to bypass potential TS issues with the clone definition in imported types
+                   const clone = (group as any).clone();
+                   svgTwo.add(clone);
+              });
+      
+              svgTwo.update();
+              
+              const svgElem = tempDiv.querySelector('svg');
+              if (svgElem) {
+                  svgElem.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                  const svgString = svgElem.outerHTML;
+                  const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+                  const url = URL.createObjectURL(blob);
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.download = `${name}.svg`;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+              }
           }
       },
       finishPath: () => {
@@ -676,6 +756,12 @@ const Stage = forwardRef<StageHandle, StageProps>(({
       },
       deleteSelectedAnchor: () => {
           engineRef.current?.deleteSelectedAnchor();
+      },
+      setAnchorSharp: () => {
+          engineRef.current?.setAnchorSharp();
+      },
+      setPathClosed: (closed: boolean) => {
+          engineRef.current?.setPathClosed(closed);
       }
   }));
 

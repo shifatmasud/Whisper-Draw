@@ -32,10 +32,12 @@ export interface Layer {
 }
 
 // --- Tooling ---
-export type Tool = 'select' | 'brush' | 'eraser' | 'fill' | 'pen';
+export type Tool = 'select' | 'brush' | 'delete' | 'pen' | 'eraser' | 'fill';
+export type SelectionMode = 'vector' | 'layer';
 
 export type LineCap = 'butt' | 'round' | 'square';
 export type LineJoin = 'bevel' | 'round' | 'miter';
+export type PenHandleMode = 'mirrored' | 'disconnected';
 
 export interface ToolSettings {
     strokeColor: string;
@@ -46,6 +48,11 @@ export interface ToolSettings {
     lineJoin: LineJoin;
     strokeEnabled: boolean;
     fillEnabled: boolean;
+    // Selection Specific
+    selectionMode: SelectionMode;
+    // Pen Specific
+    penHandleMode: PenHandleMode;
+    penClosePath: boolean;
 }
 
 // --- Engine Events ---

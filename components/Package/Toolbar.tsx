@@ -16,9 +16,8 @@ interface ToolbarProps {
 const TOOLS = [
     { id: 'select' as Tool, icon: 'ph-cursor-click', label: 'Select' },
     { id: 'brush' as Tool, icon: 'ph-paint-brush-broad', label: 'Brush' },
-    { id: 'eraser' as Tool, icon: 'ph-eraser', label: 'Eraser' },
-    { id: 'fill' as Tool, icon: 'ph-paint-bucket', label: 'Fill' },
     { id: 'pen' as Tool, icon: 'ph-pen-nib', label: 'Pen' },
+    { id: 'delete' as Tool, icon: 'ph-trash', label: 'Delete Vector' },
 ];
 
 const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onToolSelect }) => {

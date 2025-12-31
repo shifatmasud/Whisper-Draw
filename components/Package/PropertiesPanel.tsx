@@ -5,12 +5,13 @@
  */
 import React, { useState, useEffect } from 'react';
 import { useTheme } from '../../Theme.tsx';
-import { ToolSettings, Layer } from '../../types/index.tsx';
+import { ToolSettings, Layer, Tool } from '../../types/index.tsx';
 import ColorPicker from '../Core/ColorPicker.tsx';
 import RangeSlider from '../Core/RangeSlider.tsx';
 import Select from '../Core/Select.tsx';
 import Toggle from '../Core/Toggle.tsx';
 import Input from '../Core/Input.tsx';
+import Button from '../Core/Button.tsx';
 import { useMotionValue, motion, AnimatePresence } from 'framer-motion';
 
 interface PropertiesPanelProps {
@@ -18,6 +19,9 @@ interface PropertiesPanelProps {
   onSettingChange: (key: keyof ToolSettings, value: any) => void;
   activeLayer: Layer | null;
   onLayerUpdate: (id: string, properties: Partial<Layer>) => void;
+  activeTool: Tool;
+  isAnchorSelected?: boolean;
+  onPenAction?: (action: string) => void;
 }
 
 type Tab = 'tool' | 'layer' | 'canvas';
@@ -26,7 +30,10 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   toolSettings, 
   onSettingChange, 
   activeLayer,
-  onLayerUpdate
+  onLayerUpdate,
+  activeTool,
+  isAnchorSelected,
+  onPenAction
 }) => {
   const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState<Tab>('tool');
@@ -112,70 +119,151 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               exit={{ opacity: 0, x: 10 }}
               style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.M'] }}
             >
-              <div style={groupStyle}>
-                <Toggle 
-                    label="Stroke" 
-                    isOn={toolSettings.strokeEnabled} 
-                    onToggle={() => onSettingChange('strokeEnabled', !toolSettings.strokeEnabled)} 
-                />
-                {toolSettings.strokeEnabled && (
-                    <ColorPicker
-                        label=""
-                        value={toolSettings.strokeColor}
-                        onChange={(e) => onSettingChange('strokeColor', e.target.value)}
+              {activeTool === 'select' && (
+                  <div style={groupStyle}>
+                      <Select 
+                          label="Selection Mode"
+                          value={toolSettings.selectionMode}
+                          onChange={(e) => onSettingChange('selectionMode', e.target.value)}
+                          options={[
+                              { value: 'vector', label: 'Vector (Deep Select)' },
+                              { value: 'layer', label: 'Layer (Group Select)' },
+                          ]}
+                      />
+                  </div>
+              )}
+
+              {activeTool === 'pen' ? (
+                <>
+                    <div style={{ ...groupStyle, borderColor: theme.Color.Success.Content[1] }}>
+                         <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Success.Content[1] }}>PATH ACTIONS</label>
+                         <Button 
+                            label="Finish Editing" 
+                            variant="primary" 
+                            size="M" 
+                            icon="ph-check" 
+                            customFill={theme.Color.Success.Content[1]}
+                            onClick={() => onPenAction && onPenAction('finishPath')} 
+                         />
+                         <Toggle 
+                             label="Close Path" 
+                             isOn={toolSettings.penClosePath} 
+                             onToggle={() => onSettingChange('penClosePath', !toolSettings.penClosePath)} 
+                         />
+                    </div>
+                    
+                    {isAnchorSelected && (
+                        <div style={groupStyle}>
+                             <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>ANCHOR POINT</label>
+                             <div style={{ display: 'flex', gap: '8px' }}>
+                                 <Button 
+                                    label="Delete" 
+                                    variant="secondary" 
+                                    size="S" 
+                                    icon="ph-trash" 
+                                    customColor={theme.Color.Error.Content[1]}
+                                    onClick={() => onPenAction && onPenAction('deleteAnchor')} 
+                                 />
+                                 <Button 
+                                    label="Sharp" 
+                                    variant="secondary" 
+                                    size="S" 
+                                    icon="ph-corners-out" 
+                                    onClick={() => onPenAction && onPenAction('sharpAnchor')} 
+                                 />
+                             </div>
+                             <Select 
+                                label="Handle Mode"
+                                value={toolSettings.penHandleMode}
+                                onChange={(e) => onSettingChange('penHandleMode', e.target.value)}
+                                options={[
+                                    { value: 'mirrored', label: '2 Handles (Mirrored)' },
+                                    { value: 'disconnected', label: '1 Handle (Broken)' },
+                                ]}
+                             />
+                        </div>
+                    )}
+                </>
+              ) : null}
+
+              {activeTool !== 'select' && activeTool !== 'delete' && (
+                  <div style={groupStyle}>
+                    <Toggle 
+                        label="Stroke" 
+                        isOn={toolSettings.strokeEnabled} 
+                        onToggle={() => onSettingChange('strokeEnabled', !toolSettings.strokeEnabled)} 
                     />
-                )}
-              </div>
+                    {toolSettings.strokeEnabled && (
+                        <ColorPicker
+                            label=""
+                            value={toolSettings.strokeColor}
+                            onChange={(e) => onSettingChange('strokeColor', e.target.value)}
+                        />
+                    )}
+                  </div>
+              )}
 
-              <div style={groupStyle}>
-                <Toggle 
-                    label="Fill" 
-                    isOn={toolSettings.fillEnabled} 
-                    onToggle={() => onSettingChange('fillEnabled', !toolSettings.fillEnabled)} 
-                />
-                {toolSettings.fillEnabled && (
-                    <ColorPicker
-                        label=""
-                        value={toolSettings.fillColor}
-                        onChange={(e) => onSettingChange('fillColor', e.target.value)}
+              {activeTool !== 'select' && activeTool !== 'delete' && (
+                  <div style={groupStyle}>
+                    <Toggle 
+                        label="Fill" 
+                        isOn={toolSettings.fillEnabled} 
+                        onToggle={() => onSettingChange('fillEnabled', !toolSettings.fillEnabled)} 
                     />
-                )}
-              </div>
+                    {toolSettings.fillEnabled && (
+                        <ColorPicker
+                            label=""
+                            value={toolSettings.fillColor}
+                            onChange={(e) => onSettingChange('fillColor', e.target.value)}
+                        />
+                    )}
+                  </div>
+              )}
 
-              <RangeSlider
-                label="Stroke Width"
-                motionValue={strokeWidthValue}
-                onCommit={(v) => onSettingChange('strokeWidth', v)}
-                min={1}
-                max={100}
-              />
+              {activeTool !== 'select' && activeTool !== 'delete' && (
+                  <>
+                      <RangeSlider
+                        label="Stroke Width"
+                        motionValue={strokeWidthValue}
+                        onCommit={(v) => onSettingChange('strokeWidth', v)}
+                        min={1}
+                        max={100}
+                      />
 
-              <div style={{ display: 'flex', gap: theme.spacing['Space.M'] }}>
-                <div style={{ flex: 1 }}>
-                  <Select 
-                    label="Line Cap"
-                    value={toolSettings.lineCap}
-                    onChange={(e) => onSettingChange('lineCap', e.target.value)}
-                    options={[
-                      { value: 'round', label: 'Round' },
-                      { value: 'butt', label: 'Butt' },
-                      { value: 'square', label: 'Square' },
-                    ]}
-                  />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <Select 
-                    label="Line Join"
-                    value={toolSettings.lineJoin}
-                    onChange={(e) => onSettingChange('lineJoin', e.target.value)}
-                    options={[
-                      { value: 'round', label: 'Round' },
-                      { value: 'bevel', label: 'Bevel' },
-                      { value: 'miter', label: 'Miter' },
-                    ]}
-                  />
-                </div>
-              </div>
+                      <div style={{ display: 'flex', gap: theme.spacing['Space.M'] }}>
+                        <div style={{ flex: 1 }}>
+                          <Select 
+                            label="Line Cap"
+                            value={toolSettings.lineCap}
+                            onChange={(e) => onSettingChange('lineCap', e.target.value)}
+                            options={[
+                              { value: 'round', label: 'Round' },
+                              { value: 'butt', label: 'Butt' },
+                              { value: 'square', label: 'Square' },
+                            ]}
+                          />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <Select 
+                            label="Line Join"
+                            value={toolSettings.lineJoin}
+                            onChange={(e) => onSettingChange('lineJoin', e.target.value)}
+                            options={[
+                              { value: 'round', label: 'Round' },
+                              { value: 'bevel', label: 'Bevel' },
+                              { value: 'miter', label: 'Miter' },
+                            ]}
+                          />
+                        </div>
+                      </div>
+                  </>
+              )}
+              
+              {activeTool === 'delete' && (
+                  <div style={groupStyle}>
+                      <p style={{...theme.Type.Readable.Body.S, margin: 0}}>Click on any object or path to remove it.</p>
+                  </div>
+              )}
             </motion.div>
           )}
 

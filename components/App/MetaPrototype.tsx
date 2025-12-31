@@ -41,6 +41,9 @@ const MetaPrototype = () => {
     lineJoin: 'round',
     strokeEnabled: true,
     fillEnabled: false,
+    selectionMode: 'vector',
+    penHandleMode: 'mirrored',
+    penClosePath: false,
   });
 
   // --- Window Management ---
@@ -102,7 +105,31 @@ const MetaPrototype = () => {
   }, []);
   
   const handleToolSettingChange = useCallback((key: keyof ToolSettings, value: any) => {
-    setToolSettings(prev => ({...prev, [key]: value}));
+    setToolSettings(prev => {
+        // Intercept logic for stage actions triggered via settings
+        if (key === 'penClosePath') {
+            stageRef.current?.setPathClosed(value);
+        }
+        return ({...prev, [key]: value});
+    });
+  }, []);
+
+  // Actions trigger from Properties Panel for Pen tool
+  const handlePenAction = useCallback((action: string) => {
+      if (!stageRef.current) return;
+      
+      switch (action) {
+          case 'finishPath':
+              stageRef.current.finishPath();
+              setActiveTool('select');
+              break;
+          case 'deleteAnchor':
+              stageRef.current.deleteSelectedAnchor();
+              break;
+          case 'sharpAnchor':
+              stageRef.current.setAnchorSharp();
+              break;
+      }
   }, []);
 
   const handleDeleteLayer = useCallback((id: string) => {
@@ -180,75 +207,6 @@ const MetaPrototype = () => {
       />
 
       <AnimatePresence>
-        {activeTool === 'pen' && isAnchorSelected && (
-          <motion.button
-            key="delete-anchor-btn"
-            initial={{ scale: 0, rotate: -90, opacity: 0 }}
-            animate={{ scale: 1, rotate: 0, opacity: 1 }}
-            exit={{ scale: 0, rotate: -90, opacity: 0 }}
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={() => stageRef.current?.deleteSelectedAnchor()}
-            style={{
-              position: 'absolute',
-              bottom: theme.spacing['Space.XXL'],
-              right: `calc(${theme.spacing['Space.L']} + 64px + ${theme.spacing['Space.M']})`, // Positioned to left of checkmark
-              width: '64px',
-              height: '64px',
-              borderRadius: '50%',
-              backgroundColor: theme.Color.Error.Content[1],
-              color: theme.Color.Base.Surface[1],
-              border: 'none',
-              boxShadow: theme.effects['Effect.Shadow.Drop.3'],
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 2000,
-              cursor: 'pointer'
-            }}
-          >
-            <i className="ph-bold ph-trash" style={{ fontSize: '32px' }} />
-          </motion.button>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {activeTool === 'pen' && (
-          <motion.button
-            key="done-btn"
-            initial={{ scale: 0, rotate: 90 }}
-            animate={{ scale: 1, rotate: 0 }}
-            exit={{ scale: 0, rotate: 90 }}
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={() => {
-              stageRef.current?.finishPath();
-              setActiveTool('select');
-            }}
-            style={{
-              position: 'absolute',
-              bottom: theme.spacing['Space.XXL'],
-              right: theme.spacing['Space.L'],
-              width: '64px',
-              height: '64px',
-              borderRadius: '50%',
-              backgroundColor: theme.Color.Success.Content[1],
-              color: theme.Color.Base.Surface[1],
-              border: 'none',
-              boxShadow: theme.effects['Effect.Shadow.Drop.3'],
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 2000,
-              cursor: 'pointer'
-            }}
-          >
-            <i className="ph-bold ph-check" style={{ fontSize: '32px' }} />
-          </motion.button>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
         {windows.properties.isOpen && (
           <FloatingWindow
             key="properties"
@@ -261,6 +219,9 @@ const MetaPrototype = () => {
               onSettingChange={handleToolSettingChange}
               activeLayer={activeLayer}
               onLayerUpdate={handleUpdateLayerProperty}
+              activeTool={activeTool}
+              isAnchorSelected={isAnchorSelected}
+              onPenAction={handlePenAction}
             />
           </FloatingWindow>
         )}
