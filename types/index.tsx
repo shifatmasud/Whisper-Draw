@@ -47,7 +47,7 @@ export type PenHandleMode = 'mirrored' | 'disconnected';
 // Shape Tool Types
 export type ShapeType = 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'star';
 export type ShapeMode = 'insert' | 'build';
-export type BuildMode = 'merge' | 'subtract';
+export type BuildMode = 'add' | 'subtract';
 
 export interface ToolSettings {
     strokeColor: string;
@@ -74,6 +74,8 @@ export interface ToolSettings {
 }
 
 // --- Engine Events ---
+export type SelectedObjectType = ShapeType | 'path' | null;
+
 export interface SelectionState {
   layerId: string | null;
   shapeId: string | null;

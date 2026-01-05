@@ -1,4 +1,5 @@
 
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -14,7 +15,7 @@ import PropertiesPanel from '../Package/PropertiesPanel.tsx';
 import AssetsPanel from '../Package/AssetsPanel.tsx';
 import LayersPanel from '../Package/LayersPanel.tsx';
 import Toolbar from '../Package/Toolbar.tsx';
-import { WindowId, WindowState, Layer, Tool, ToolSettings } from '../../types/index.tsx';
+import { WindowId, WindowState, Layer, Tool, ToolSettings, ShapeType } from '../../types/index.tsx';
 
 /**
  * 🎨 2D Texture Design Tool
@@ -32,7 +33,7 @@ const MetaPrototype = () => {
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [isAnchorSelected, setIsAnchorSelected] = useState(false);
-  const [selectedObjectType, setSelectedObjectType] = useState<'primitive' | 'path' | null>(null);
+  const [selectedObjectType, setSelectedObjectType] = useState<ShapeType | 'path' | null>(null);
   
   const [toolSettings, setToolSettings] = useState<ToolSettings>({
     strokeColor: '#000000',
@@ -49,7 +50,7 @@ const MetaPrototype = () => {
     // Shape Tool Defaults
     shapeType: 'rectangle',
     shapeMode: 'insert',
-    buildMode: 'merge',
+    buildMode: 'add',
     cornerRadius: 16,
     starPoints: 5,
     starInnerRadius: 0.5,

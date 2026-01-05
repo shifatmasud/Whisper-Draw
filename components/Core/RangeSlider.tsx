@@ -2,66 +2,124 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useRef, useEffect, useState } from 'react';
-import { type MotionValue, animate } from 'framer-motion';
+import React, { useRef, useState } from 'react';
+import { type MotionValue, motion, useTransform, useMotionValueEvent } from 'framer-motion';
 import { useTheme } from '../../Theme.tsx';
+
+// A sub-component that only re-renders when the motion value changes.
+const MotionValueInput: React.FC<{
+  motionValue: MotionValue<number>;
+  min: number;
+  max: number;
+  step: number;
+  onCommit: (v: number) => void;
+  style: React.CSSProperties;
+}> = ({ motionValue, min, max, step, onCommit, style }) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [inputValue, setInputValue] = useState(motionValue.get().toString());
+  const precision = step.toString().split('.')[1]?.length || 0;
+
+  useMotionValueEvent(motionValue, "change", (latest) => {
+    // Only update from motion value if the input is not focused, to prevent cursor jumping
+    if (document.activeElement !== inputRef.current) {
+      setInputValue(latest.toFixed(precision));
+    }
+  });
+
+  const handleCommit = (valueStr: string) => {
+    const value = parseFloat(valueStr);
+    const clamped = Math.min(Math.max(isNaN(value) ? motionValue.get() : value, min), max);
+    setInputValue(clamped.toFixed(precision));
+    motionValue.set(clamped);
+    onCommit(clamped);
+  };
+
+  return (
+    <input
+      ref={inputRef}
+      type="text" // Use text to allow intermediate states like "1."
+      inputMode="decimal"
+      value={inputValue}
+      onChange={(e) => {
+        setInputValue(e.target.value);
+        const num = parseFloat(e.target.value);
+        if (!isNaN(num)) {
+          motionValue.set(num); // Update motion value in real-time
+        }
+      }}
+      onBlur={(e) => handleCommit(e.target.value)}
+      onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            handleCommit((e.target as HTMLInputElement).value);
+            (e.target as HTMLInputElement).blur();
+          }
+      }}
+      style={style}
+    />
+  );
+};
 
 interface RangeSliderProps {
   label: string;
   motionValue: MotionValue<number>;
   onCommit: (value: number) => void;
+  onChange?: (value: number) => void;
   min?: number;
   max?: number;
+  step?: number;
   trackBackground?: string;
 }
 
-const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit, min = 0, max = 100, trackBackground }) => {
+const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit, onChange, min = 0, max = 100, step = 0.1, trackBackground }) => {
   const { theme } = useTheme();
   const trackRef = useRef<HTMLDivElement>(null);
-  const [internalValue, setInternalValue] = useState(motionValue.get());
-  const [isDragging, setIsDragging] = useState(false);
-
-  // Sync internal state with external motion value updates (e.g. undo/redo)
-  useEffect(() => {
-    const unsubscribe = motionValue.onChange((v) => {
-      if (!isDragging) {
-        setInternalValue(v);
-      }
-    });
-    return unsubscribe;
-  }, [motionValue, isDragging]);
+  const isDraggingRef = useRef(false);
 
   const updateValueFromPointer = (clientX: number) => {
     if (!trackRef.current) return;
     const rect = trackRef.current.getBoundingClientRect();
     const percent = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
-    const newValue = Math.round(min + percent * (max - min));
+    const rawValue = min + percent * (max - min);
     
-    setInternalValue(newValue);
-    motionValue.set(newValue); // Real-time update
+    // Improved snapping logic for floats
+    const numSteps = (rawValue - min) / step;
+    const snappedValue = min + Math.round(numSteps) * step;
+
+    const precision = step.toString().includes('.') ? step.toString().split('.')[1].length : 0;
+    const finalValue = parseFloat(snappedValue.toFixed(precision));
+
+    motionValue.set(finalValue);
+    if (onChange) {
+      onChange(finalValue);
+    }
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    setIsDragging(true);
+    isDraggingRef.current = true;
     trackRef.current?.setPointerCapture(e.pointerId);
     updateValueFromPointer(e.clientX);
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (isDragging) {
+    if (isDraggingRef.current) {
       updateValueFromPointer(e.clientX);
     }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
-    if (isDragging) {
-      setIsDragging(false);
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
       trackRef.current?.releasePointerCapture(e.pointerId);
-      onCommit(internalValue); // Commit only on release
+      onCommit(motionValue.get());
     }
   };
 
-  const percentage = ((internalValue - min) / (max - min)) * 100;
+  const percentageString = useTransform(motionValue, (v) => {
+    const clampedV = Math.max(min, Math.min(max, v));
+    return `${((clampedV - min) / (max - min)) * 100}%`;
+  });
 
   const numberInputStyle: React.CSSProperties = {
     width: '60px',
@@ -75,6 +133,19 @@ const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit,
     textAlign: 'center',
     outline: 'none',
   };
+  
+  const thumbStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: '50%',
+    width: '18px',
+    height: '18px',
+    backgroundColor: theme.Color.Base.Surface[1],
+    border: `2px solid ${theme.Color.Accent.Surface[1]}`,
+    borderRadius: '50%',
+    transform: 'translate(-50%, -50%)',
+    boxShadow: theme.effects['Effect.Shadow.Drop.1'],
+    transformOrigin: 'center'
+  };
 
   return (
     <div onPointerDown={(e) => e.stopPropagation()}>
@@ -83,8 +154,6 @@ const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit,
       </label>
       
       <div style={{ display: 'flex', alignItems: 'center', gap: theme.spacing['Space.S'] }}>
-        
-        {/* Custom Track */}
         <div 
             ref={trackRef}
             style={{ 
@@ -93,11 +162,12 @@ const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit,
                 display: 'flex', 
                 alignItems: 'center', 
                 cursor: 'pointer',
-                touchAction: 'none' // Prevent scrolling while dragging
+                touchAction: 'none'
             }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
+            onPointerLeave={handlePointerUp}
         >
             <div style={{ 
                 position: 'relative', 
@@ -106,56 +176,31 @@ const RangeSlider: React.FC<RangeSliderProps> = ({ label, motionValue, onCommit,
                 backgroundColor: theme.Color.Base.Surface[3], 
                 borderRadius: '3px',
                 overflow: 'visible',
-                background: trackBackground // Optional custom background
+                background: trackBackground
             }}>
-                {/* Fill Bar (Only show if no custom background) */}
-                {!trackBackground && <div style={{ 
+                {!trackBackground && <motion.div style={{ 
                     position: 'absolute', 
                     top: 0, 
                     left: 0, 
                     height: '100%', 
-                    width: `${percentage}%`, 
+                    width: percentageString, 
                     backgroundColor: theme.Color.Accent.Surface[1], 
                     borderRadius: '3px' 
                 }} />}
                 
-                {/* Thumb */}
-                <div style={{
-                    position: 'absolute',
-                    top: '50%',
-                    left: `${percentage}%`,
-                    width: '18px',
-                    height: '18px',
-                    backgroundColor: theme.Color.Base.Surface[1],
-                    border: `2px solid ${theme.Color.Accent.Surface[1]}`,
-                    borderRadius: '50%',
-                    transform: 'translate(-50%, -50%)',
-                    boxShadow: theme.effects['Effect.Shadow.Drop.1'],
-                    transition: 'transform 0.1s ease',
-                    transformOrigin: 'center'
+                <motion.div style={{
+                    ...thumbStyle,
+                    left: percentageString,
                 }} />
             </div>
         </div>
 
-        {/* Number Input */}
-        <input
-          type="number"
+        <MotionValueInput
+          motionValue={motionValue}
           min={min}
           max={max}
-          value={Math.round(internalValue)}
-          onChange={(e) => {
-             const v = parseInt(e.target.value, 10) || 0;
-             const clamped = Math.min(Math.max(v, min), max);
-             setInternalValue(clamped);
-             motionValue.set(clamped);
-          }}
-          onBlur={() => onCommit(internalValue)}
-          onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                  onCommit(internalValue);
-                  (e.target as HTMLInputElement).blur();
-              }
-          }}
+          step={step}
+          onCommit={onCommit}
           style={numberInputStyle}
         />
       </div>
