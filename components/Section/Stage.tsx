@@ -60,7 +60,7 @@ class CanvasEngine {
     buildState = {
         isActive: false,
         shards: [] as { twoShape: Two.Path, paperShape: paper.PathItem, id: string, isSelected: boolean }[],
-        originalChildren: [] as Two.Object[], // Store originals to restore if cancelled or hide
+        originalShapes: [] as Two.Shape[], // Flattened list of all consumed shapes (recursive)
         lassoPath: null as Two.Path | null,
         lassoPoints: [] as Two.Anchor[],
         container: null as Two.Group | null, // Group to hold shards
@@ -235,10 +235,6 @@ class CanvasEngine {
         });
 
         // Ensure overlays are on top
-        if (this.buildState.container) {
-            this.two.scene.remove(this.buildState.container);
-            this.two.scene.add(this.buildState.container);
-        }
         if (this.transformGroup) {
             this.two.scene.remove(this.transformGroup);
             this.two.scene.add(this.transformGroup);
@@ -246,10 +242,6 @@ class CanvasEngine {
         if (this.penHelpers) {
             this.two.scene.remove(this.penHelpers);
             this.two.scene.add(this.penHelpers);
-        }
-        if (this.buildState.lassoPath) {
-             this.two.scene.remove(this.buildState.lassoPath);
-             this.two.scene.add(this.buildState.lassoPath);
         }
     }
 
@@ -366,36 +358,80 @@ class CanvasEngine {
     
     // --- Shape Builder (Build Mode) Logic ---
 
+    // Recursive helper to collect all shapes in a group tree and map them to a common coordinate space (Active Group Space)
+    private collectShapes(
+        group: Two.Group,
+        accum: { twoShape: Two.Shape, paperItem: paper.PathItem }[],
+        matrixStack: paper.Matrix = new this.paperScope.Matrix()
+    ) {
+        // Copy children to avoid issues if children array is modified during iteration (though we don't modify here)
+        const children = [...group.children];
+        
+        children.forEach(child => {
+            // Safety: Skip our own UI elements
+            if (child === this.buildState.container) return;
+            if (child === this.buildState.lassoPath) return;
+
+            if (child instanceof Two.Group) {
+                // For a group, we need to append its transform to the stack so its children 
+                // are brought into the common space.
+                const childMatrix = this.twoMatrixToPaperMatrix(child.matrix);
+                const nextMatrix = matrixStack.clone().append(childMatrix);
+                this.collectShapes(child, accum, nextMatrix);
+            } else if (child instanceof Two.Shape) {
+                // For a leaf shape, we flatten it to a path, then transform it
+                // 1. Shape Local -> Parent Group (handled by child.matrix)
+                // 2. Parent Group -> Root Active Group (handled by matrixStack)
+                
+                const flattened = this.flattenShape(child, true); // Clone as path
+                if (flattened) {
+                    // Reset transform on the temp clone to ensure no double-transform 
+                    // (We will apply the original shape's matrix manually via Paper.js)
+                    flattened.translation.set(0, 0);
+                    flattened.rotation = 0;
+                    flattened.scale = 1;
+
+                    const pItem = this.twoPathToPaperPath(flattened);
+                    
+                    const shapeMatrix = this.twoMatrixToPaperMatrix(child.matrix);
+                    // Apply Shape's own transform
+                    pItem.transform(shapeMatrix);
+                    // Apply accumulated transforms up to the root
+                    pItem.transform(matrixStack);
+                    
+                    accum.push({ twoShape: child, paperItem: pItem });
+                }
+            }
+        });
+    }
+
     private enterBuildMode() {
         if (this.buildState.isActive) this.exitBuildMode();
         if (!this.activeLayerId) return;
-        const group = this.groups.get(this.activeLayerId);
-        if (!group || group.children.length === 0) return;
+        const activeGroup = this.groups.get(this.activeLayerId);
+        if (!activeGroup) return;
 
         this.buildState.isActive = true;
-        this.buildState.originalChildren = [...group.children];
+        this.buildState.originalShapes = []; // Reset list
         
-        // Hide original shapes
-        group.children.forEach(c => c.visible = false);
+        // 1. Recursively collect all visible shapes in the active group and convert to Paper items in local space
+        const collected: { twoShape: Two.Shape, paperItem: paper.PathItem }[] = [];
+        this.collectShapes(activeGroup, collected);
+        
+        if (collected.length === 0) {
+            this.buildState.isActive = false;
+            return;
+        }
 
-        // 1. Convert all visible shapes to Paper.js items
-        const paperItems: paper.PathItem[] = [];
-        
-        this.buildState.originalChildren.forEach(child => {
-            if (child instanceof Two.Shape) { // Only process shapes
-                 const flattened = this.flattenShape(child, true); // Flatten without adding to scene
-                 if (flattened) {
-                     const pItem = this.twoPathToPaperPath(flattened);
-                     // Apply matrix transforms from the group to get world space
-                     const groupMatrix = this.twoMatrixToPaperMatrix(group.matrix);
-                     pItem.transform(groupMatrix);
-                     paperItems.push(pItem);
-                 }
-            }
+        // Hide original shapes and track them
+        collected.forEach(item => {
+            item.twoShape.visible = false;
+            this.buildState.originalShapes.push(item.twoShape);
         });
 
+        const paperItems = collected.map(c => c.paperItem);
+
         // 2. Shatter Algorithm: "Cookie Cutter"
-        // Decompose overlapping shapes into non-overlapping atomic regions (shards)
         let shards: paper.PathItem[] = [];
         
         if (paperItems.length > 0) {
@@ -438,10 +474,12 @@ class CanvasEngine {
         }
 
         // 3. Create Two.js Visuals for Shards
+        // We add the container to the ACTIVE GROUP so shards are rendered in the group's local space
         this.buildState.container = new Two.Group();
-        this.two.add(this.buildState.container);
+        activeGroup.add(this.buildState.container);
 
         shards.forEach(shard => {
+             // Import into the container. Shard coordinates are already in Active Group Space.
              const twoPath = this.importPaperItemToTwo(shard, this.buildState.container!, null);
              if (twoPath) {
                  // Style as "Ghost"
@@ -464,37 +502,29 @@ class CanvasEngine {
         this.buildState.lassoPath.linewidth = 2;
         this.buildState.lassoPath.dashes = [5, 5];
         this.buildState.lassoPath.noFill();
-        this.two.add(this.buildState.lassoPath);
+        this.buildState.container.add(this.buildState.lassoPath); // Add to container so it moves with group
     }
 
     private exitBuildMode() {
         if (!this.buildState.isActive) return;
 
-        // Restore originals if we didn't commit (handled by visible flag)
-        if (this.activeLayerId) {
-            const group = this.groups.get(this.activeLayerId);
-            if (group) {
-                this.buildState.originalChildren.forEach(c => c.visible = true);
-            }
-        }
+        // Restore visibility of original shapes
+        this.buildState.originalShapes.forEach(shape => shape.visible = true);
 
         // Cleanup
         if (this.buildState.container) {
-            this.buildState.container.remove();
-            this.two.remove(this.buildState.container);
-        }
-        if (this.buildState.lassoPath) {
-            this.buildState.lassoPath.remove();
-            this.two.remove(this.buildState.lassoPath);
+            this.buildState.container.remove(); // Removes from parent (Active Group)
         }
         
         this.buildState.shards = [];
-        this.buildState.originalChildren = [];
+        this.buildState.originalShapes = [];
         this.buildState.lassoPoints = [];
         this.buildState.isActive = false;
     }
 
     private updateBuildLasso(x: number, y: number) {
+        // Points x, y are in Active Group Local Space
+        
         // Add point to lasso
         const anchor = new Two.Anchor(x, y);
         this.buildState.lassoPoints.push(anchor);
@@ -523,8 +553,8 @@ class CanvasEngine {
 
     private finalizeBuild() {
         if (!this.activeLayerId || !this.buildState.isActive) return;
-        const group = this.groups.get(this.activeLayerId);
-        if (!group) return;
+        const activeGroup = this.groups.get(this.activeLayerId);
+        if (!activeGroup) return;
 
         const selectedShards = this.buildState.shards.filter(s => s.isSelected);
         const unselectedShards = this.buildState.shards.filter(s => !s.isSelected);
@@ -548,18 +578,14 @@ class CanvasEngine {
         }
 
         // Commit Changes to Layer
-        // 1. Remove original children
-        this.buildState.originalChildren.forEach(c => c.remove());
-        
-        const groupMatrix = this.twoMatrixToPaperMatrix(group.matrix);
-        const invGroupMatrix = groupMatrix.inverted();
+        // 1. Remove original children permanently
+        this.buildState.originalShapes.forEach(c => c.remove());
         
         // 2. Add Unselected Shards as new individual shapes
+        // These shards are already in Active Group Space, so we just import them directly.
         unselectedShards.forEach(shard => {
-            const localShard = shard.paperShape.clone(); // Clone to avoid modifying original
-            localShard.transform(invGroupMatrix);
-            
-            const newPath = this.importPaperItemToTwo(localShard, group, null);
+            // Note: shard.paperShape is in Active Group Space.
+            const newPath = this.importPaperItemToTwo(shard.paperShape, activeGroup, null);
             if (newPath) {
                 newPath.fill = this.settings.fillEnabled ? this.settings.fillColor : 'transparent';
                 newPath.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : 'black';
@@ -569,9 +595,7 @@ class CanvasEngine {
         
         // 3. Add the United Shape (if Add mode)
         if (this.settings.buildMode === 'add' && newPaperItem) {
-             newPaperItem.transform(invGroupMatrix);
-
-             const newPath = this.importPaperItemToTwo(newPaperItem, group, null);
+             const newPath = this.importPaperItemToTwo(newPaperItem, activeGroup, null);
              if (newPath) {
                  newPath.fill = this.settings.fillEnabled ? this.settings.fillColor : 'transparent';
                  newPath.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : 'black';
@@ -579,8 +603,9 @@ class CanvasEngine {
              }
         }
         
-        // Reset Build State
+        // Reset Build State (forces clean exit without restoring originals since we removed them)
         this.buildState.isActive = false; 
+        this.buildState.originalShapes = []; // Clear ref so exitBuildMode doesn't try to restore visibility on removed items
         this.exitBuildMode();
         
         // Trigger thumbnail update for this layer
@@ -671,7 +696,11 @@ class CanvasEngine {
     // --- Boolean Operations Bridge ---
     private twoMatrixToPaperMatrix(twoMatrix: Two.Matrix): paper.Matrix {
         const m = twoMatrix.elements;
-        return new this.paperScope.Matrix(m[0], m[1], m[3], m[4], m[6], m[7]);
+        // Paper.js Matrix(a, c, b, d, tx, ty) vs Two.js elements [a, b, 0, c, d, 0, tx, ty, 1] (column-major-ish storage)
+        // Two.js m[1] is skewY (b in standard affine), m[3] is skewX (c in standard affine).
+        // Paper constructor expects: a, c, b, d, tx, ty.
+        // So we pass m[3] (c) to the 2nd arg, and m[1] (b) to the 3rd arg.
+        return new this.paperScope.Matrix(m[0], m[3], m[1], m[4], m[6], m[7]);
     }
 
     private twoPathToPaperPath(twoPath: Two.Path): paper.PathItem {
@@ -818,20 +847,21 @@ class CanvasEngine {
         }
         this.lastClickTime = now;
 
+        if (!this.activeLayerId) return;
+        const group = this.groups.get(this.activeLayerId);
+        if (!group) return;
+        const local = this.toLocal(group, x, y);
+
         // --- Build Mode Interaction ---
         if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive) {
              this.isInteracting = true;
              this.buildState.lassoPoints = [];
              this.buildState.lassoPath!.vertices = []; // Clear previous lasso
-             this.updateBuildLasso(x, y);
+             // Pass local coordinates relative to the group
+             this.updateBuildLasso(local.x, local.y);
              return;
         }
 
-        if (!this.activeLayerId) return;
-        const group = this.groups.get(this.activeLayerId);
-        if (!group) return;
-        
-        const local = this.toLocal(group, x, y);
         this.isInteracting = true;
 
         if (this.tool === 'delete') {
@@ -897,16 +927,16 @@ class CanvasEngine {
     }
 
     handleMove(x: number, y: number) {
-        // --- Build Mode Interaction ---
-        if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive && this.isInteracting) {
-            this.updateBuildLasso(x, y);
-            return;
-        }
-
         if (!this.activeLayerId) return;
         const group = this.groups.get(this.activeLayerId);
         if (!group) return;
         const local = this.toLocal(group, x, y);
+
+        // --- Build Mode Interaction ---
+        if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive && this.isInteracting) {
+            this.updateBuildLasso(local.x, local.y);
+            return;
+        }
 
         if (this.tool === 'select' && this.selectedShape && this.isInteracting) {
             this.selectedShape.translation.set(local.x - this.dragOffset.x, local.y - this.dragOffset.y);
