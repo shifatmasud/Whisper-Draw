@@ -1,9 +1,11 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
 import React, { useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 import Two from 'two.js';
+import paper from 'paper';
 import { useTheme } from '../../Theme.tsx';
 import { Layer, Tool, ToolSettings } from '../../types/index.tsx';
 
@@ -19,12 +21,15 @@ const lerpV = (v1: {x: number, y: number}, v2: {x: number, y: number}, t: number
  */
 class CanvasEngine {
     two: Two;
+    paperScope: paper.PaperScope;
     groups: Map<string, Two.Group> = new Map();
     activeLayerId: string | null = null;
     tool: Tool = 'select';
     settings!: ToolSettings; // Will be set immediately after construction
     onToolChange?: (tool: Tool) => void;
     onAnchorSelect?: (isSelected: boolean) => void;
+    onSelectionTypeChange?: (type: 'primitive' | 'path' | null) => void;
+    onSelectionPropertiesChange?: (properties: Partial<ToolSettings>) => void;
     
     // Selection & Transform State
     selectedShape: any | null = null; 
@@ -35,6 +40,11 @@ class CanvasEngine {
     dragOffset = { x: 0, y: 0 };
     currentPath: Two.Path | null = null;
     
+    // Shape Tool State
+    tempShape: any | null = null;
+    shapeOrigin = { x: 0, y: 0 };
+    buildPath: Two.Path | null = null;
+
     // Pen tool / Path Editing state
     penPath: Two.Path | null = null;
     selectedAnchorIdx: number = -1;
@@ -55,6 +65,12 @@ class CanvasEngine {
             height: container.clientHeight,
             autostart: true,
         }).appendTo(container);
+
+        // Initialize Headless Paper.js Scope for Math
+        this.paperScope = new paper.PaperScope();
+        // Create a dummy canvas for paper (required even for headless math in some versions)
+        const dummyCanvas = document.createElement('canvas');
+        this.paperScope.setup(dummyCanvas);
     }
     
     // --- Public API for React ---
@@ -63,15 +79,28 @@ class CanvasEngine {
         if (this.tool === tool) return;
         this.tool = tool;
 
-        if (tool !== 'select') {
-            this.selectedShape = null;
-            this.updateSelectionHandles();
+        this.updateSelectionHandles(); // This will hide/show handles based on new tool
+
+        if (tool === 'select' && this.selectedShape) {
+            // Re-broadcast selection type if switching back to select tool
+            if (this.onSelectionTypeChange) {
+                let selectionType: 'primitive' | 'path' | null = null;
+                if (this.selectedShape instanceof Two.Rectangle || this.selectedShape instanceof Two.Ellipse || this.selectedShape instanceof Two.Polygon || this.selectedShape instanceof Two.Star || this.selectedShape instanceof Two.Line) {
+                    selectionType = 'primitive';
+                } else if (this.selectedShape instanceof Two.Path) {
+                    selectionType = 'path';
+                }
+                this.onSelectionTypeChange(selectionType);
+            }
+        } else if (tool !== 'select') {
+            // Hide selection-specific UI when not on select tool
+            if (this.onSelectionTypeChange) this.onSelectionTypeChange(null);
         }
         
         if (tool !== 'pen') {
-            this.finishPath(); // Cleans up all pen state
-        } else {
-            this.updatePenHelpers(); // Show helpers if switching to pen
+            this.finishPath();
+        } else if (this.penPath) {
+            this.updatePenHelpers();
         }
     }
 
@@ -81,6 +110,18 @@ class CanvasEngine {
 
     public setToolSettings(settings: ToolSettings) {
         this.settings = settings;
+
+        // Apply settings to the currently selected shape for live manipulation
+        if (this.selectedShape) {
+            this.selectedShape.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : 'transparent';
+            this.selectedShape.linewidth = this.settings.strokeWidth;
+            this.selectedShape.fill = this.settings.fillEnabled ? this.settings.fillColor : 'transparent';
+            
+            // These might not exist on all shapes, but Two.js should handle it gracefully
+            if ('cap' in this.selectedShape) (this.selectedShape as any).cap = this.settings.lineCap;
+            if ('join' in this.selectedShape) (this.selectedShape as any).join = this.settings.lineJoin;
+        }
+
         // Real-time update for the currently edited path
         if (this.penPath) {
             this.penPath.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : 'transparent';
@@ -92,9 +133,16 @@ class CanvasEngine {
         }
     }
 
-    public setCallbacks(callbacks: { onToolChange?: (tool: Tool) => void, onAnchorSelect?: (isSelected: boolean) => void }) {
+    public setCallbacks(callbacks: { 
+        onToolChange?: (tool: Tool) => void, 
+        onAnchorSelect?: (isSelected: boolean) => void,
+        onSelectionTypeChange?: (type: 'primitive' | 'path' | null) => void,
+        onSelectionPropertiesChange?: (properties: Partial<ToolSettings>) => void
+    }) {
         this.onToolChange = callbacks.onToolChange;
         this.onAnchorSelect = callbacks.onAnchorSelect;
+        this.onSelectionTypeChange = callbacks.onSelectionTypeChange;
+        this.onSelectionPropertiesChange = callbacks.onSelectionPropertiesChange;
     }
     
     public updateLayers(layers: Layer[]) {
@@ -192,6 +240,257 @@ class CanvasEngine {
         if (!this.penPath) return;
         this.penPath.closed = closed;
     }
+
+    public duplicateLayerContent(originalId: string, newId: string) {
+        const originalGroup = this.groups.get(originalId);
+        if (!originalGroup) return;
+
+        // Two.Group's clone() method deeply clones all children.
+        const newGroup = (originalGroup as any).clone();
+        newGroup.id = newId; // Assign the new ID for our mapping.
+        
+        // Add the new group to our map and the scene. The `updateLayers` call
+        // that follows this action will handle setting the correct properties
+        // and z-index ordering.
+        this.groups.set(newId, newGroup);
+        this.two.add(newGroup);
+    }
+
+    // --- Internal Logic: Primitives to Path ---
+    private flattenShape(shape: any): Two.Path | null {
+        if (!this.activeLayerId) return null;
+        const group = this.groups.get(this.activeLayerId);
+        if (!group) return null;
+
+        // If it's already a Path, just clone it to ensure we work on a clean instance if needed
+        // but typically we just return it. 
+        // Wait, if it's a Two.Path we can return it. If it's Rect/Circle, we convert.
+        
+        if (shape instanceof Two.Path) {
+            return shape;
+        }
+
+        // It is a primitive (Rectangle, Ellipse, etc.)
+        // Convert to Path by cloning vertices
+        // Note: Two.js Primitives store their geometry in `vertices` just like Paths, 
+        // but they have specialized rendering logic. Copying vertices to a Two.Path works.
+        
+        const vertices = shape.vertices.map((v: any) => v.clone());
+        const path = new Two.Path(vertices, shape.closed, shape.curved, shape.manual);
+        
+        // Copy transform & styling
+        path.translation.copy(shape.translation);
+        path.rotation = shape.rotation;
+        path.scale = shape.scale;
+        path.fill = shape.fill;
+        path.stroke = shape.stroke;
+        path.linewidth = shape.linewidth;
+        path.opacity = shape.opacity;
+        path.blending = shape.blending;
+
+        // Replace in Scene Graph
+        const index = group.children.indexOf(shape);
+        shape.remove();
+        if (index >= 0) {
+             group.children.splice(index, 0, path);
+             path.parent = group; 
+        } else {
+             group.add(path);
+        }
+
+        return path;
+    }
+
+    public flattenSelectedShape() {
+        if (!this.selectedShape) return;
+        const newShape = this.flattenShape(this.selectedShape);
+        if (newShape) {
+            this.selectedShape = newShape;
+            this.updateSelectionHandles();
+            if (this.onSelectionTypeChange) {
+                this.onSelectionTypeChange('path');
+            }
+        }
+    }
+    
+    // --- Boolean Operations Bridge ---
+    
+    private twoPathToPaperPath(twoPath: Two.Path): paper.PathItem {
+        // 1. Create Paper Path from Two.js Vertices
+        // We rely on simple SVG path data transfer for robustness with curves
+        // Or manual reconstruction. Manual is better for transforms.
+        
+        const path = new this.paperScope.Path({
+            closed: twoPath.closed
+        });
+
+        twoPath.vertices.forEach(v => {
+            const segment = new this.paperScope.Segment(
+                new this.paperScope.Point(v.x, v.y),
+                new this.paperScope.Point(v.controls?.left?.x || 0, v.controls?.left?.y || 0),
+                new this.paperScope.Point(v.controls?.right?.x || 0, v.controls?.right?.y || 0)
+            );
+            path.add(segment);
+        });
+
+        // 2. Apply Transforms
+        // Two.js rotation is Radians, Paper is Degrees.
+        path.position = new this.paperScope.Point(twoPath.translation.x, twoPath.translation.y);
+        path.rotation = (twoPath.rotation * 180) / Math.PI;
+        
+        // Handle Scale (Two.js can be number or vector)
+        const sx = typeof twoPath.scale === 'number' ? twoPath.scale : twoPath.scale.x;
+        const sy = typeof twoPath.scale === 'number' ? twoPath.scale : twoPath.scale.y;
+        path.scaling = new this.paperScope.Point(sx, sy);
+
+        return path;
+    }
+
+    private importPaperPathToTwo(paperItem: paper.Item, targetGroup: Two.Group, styleSource: Two.Path) {
+        // Export as SVG String from Paper (Simplest way to handle CompoundPaths/Holes correctly)
+        const svgString = paperItem.exportSVG({ asString: true }) as string;
+        
+        // Parse SVG using native DOM parser to get an Element
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(svgString, 'image/svg+xml');
+        const svgElement = doc.documentElement; // This is the <path> or <g>
+
+        // Interpret with Two.js
+        // Two.interpret returns a Two.Group usually containing the paths, OR a Two.Path if it's a simple path.
+        const loaded = this.two.interpret(svgElement);
+        
+        if (!loaded) return;
+
+        let shapes: any[] = [];
+        
+        // Fix: Robust check for children to handle different Two.js versions/types
+        // Two.js groups use 'children' which might be a Collection or Array.
+        if ('children' in loaded && (loaded as any).children && (loaded as any).children.length > 0) {
+             // Array.from is safer than spread for iterables in some environments
+             shapes = Array.from((loaded as any).children);
+        } else {
+             shapes = [loaded];
+        }
+        
+        shapes.forEach((child: any) => {
+            // Apply style from the base shape (the one we merged into)
+            child.fill = styleSource.fill;
+            child.stroke = styleSource.stroke;
+            child.linewidth = styleSource.linewidth;
+            child.opacity = styleSource.opacity;
+            child.blending = styleSource.blending;
+            
+            // Note: If child was part of 'loaded', adding it to 'targetGroup' removes it from 'loaded'.
+            targetGroup.add(child);
+        });
+        
+        // Cleanup temp object
+        loaded.remove();
+    }
+
+    performBuildOperation() {
+        if (!this.activeLayerId || !this.buildPath) return;
+        const group = this.groups.get(this.activeLayerId);
+        if (!group) return;
+
+        // 1. Calculate Selection Bounds (Build Path in Group Space)
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        if (this.buildPath.vertices.length > 0) {
+            this.buildPath.vertices.forEach(v => {
+                const local = this.toLocal(group, v.x, v.y);
+                if (local.x < minX) minX = local.x;
+                if (local.x > maxX) maxX = local.x;
+                if (local.y < minY) minY = local.y;
+                if (local.y > maxY) maxY = local.y;
+            });
+        } else {
+             return;
+        }
+        
+        // 2. Find Hit Shapes
+        // We iterate backwards to prioritize top items but gather all
+        const hitShapes: Two.Path[] = [];
+        
+        // Create a copy of children list to avoid modification issues during iteration
+        const candidates = [...group.children];
+        
+        candidates.forEach(child => {
+            if (child instanceof Two.Shape) {
+                const b = child.getBoundingClientRect();
+                if (minX < b.right && maxX > b.left && minY < b.bottom && maxY > b.top) {
+                    // HIT!
+                    // Requirement: "Require convert to path first".
+                    // We Auto-Flatten for better UX.
+                    const flattened = this.flattenShape(child);
+                    if (flattened) {
+                        hitShapes.push(flattened);
+                    }
+                }
+            }
+        });
+
+        if (hitShapes.length < 2 && this.settings.buildMode !== 'subtract') return; // Need 2+ for merge, subtract needs 1+ (selection is cutter) but here logic implies interacting shapes.
+        if (hitShapes.length === 0) return;
+
+        // 3. Prepare Paper.js Items
+        // We map Two shapes to Paper items.
+        // hitShapes is in Z-index order (bottom to top? No, we iterated a copy. Let's rely on index).
+        // Let's sort by index in group to be safe: Bottom -> Top
+        hitShapes.sort((a, b) => group.children.indexOf(a) - group.children.indexOf(b));
+
+        const paperItems = hitShapes.map(s => this.twoPathToPaperPath(s));
+
+        // 4. Perform Boolean Operation
+        let resultItem: paper.Item | null = null;
+
+        if (this.settings.buildMode === 'merge') {
+            // Union All
+            resultItem = paperItems[0];
+            for (let i = 1; i < paperItems.length; i++) {
+                const next = paperItems[i];
+                const union = resultItem.unite(next);
+                // Cleanup intermediate items to free memory in Paper scope?
+                // Paper.js manages its scene graph. We should remove used items.
+                if (resultItem !== paperItems[0]) resultItem.remove(); // Remove previous intermediate
+                resultItem = union;
+            }
+        } else if (this.settings.buildMode === 'subtract') {
+            // Subtract Top from Bottom (Illustrator Pathfinder "Minus Front")
+            // Bottom shape is paperItems[0]. All others are subtractors.
+            const base = paperItems[0];
+            let combinedSubtractors: paper.Item | null = null;
+            
+            // Union all subtractors first (standard behavior)
+            if (paperItems.length > 1) {
+                combinedSubtractors = paperItems[1];
+                for (let i = 2; i < paperItems.length; i++) {
+                    const next = paperItems[i];
+                    const union = combinedSubtractors.unite(next);
+                    if (combinedSubtractors !== paperItems[1]) combinedSubtractors.remove();
+                    combinedSubtractors = union;
+                }
+                
+                resultItem = base.subtract(combinedSubtractors);
+            } else {
+                // Nothing to subtract from? Or just selection?
+                return;
+            }
+        }
+
+        // 5. Apply Result
+        if (resultItem) {
+            // Remove old Two.js shapes
+            hitShapes.forEach(s => s.remove());
+            
+            // Add new shape
+            // We use the style of the bottom-most shape (hitShapes[0])
+            this.importPaperPathToTwo(resultItem, group, hitShapes[0]);
+        }
+
+        // Cleanup Paper.js
+        this.paperScope.project.activeLayer.removeChildren();
+    }
+    
     
     updateSelectionHandles() {
         if (this.transformGroup) {
@@ -256,7 +555,7 @@ class CanvasEngine {
         const l2 = { x: lerp(l1.x, h1.x, t), y: lerp(l1.y, h1.y, t) };
         const h1_new = { x: lerp(h1.x, h2.x, t), y: lerp(h1.y, h2.y, t) };
 
-        const split = { x: lerp(l2.x, h1_new.x, t), y: lerp(l2.y, h1_new.y, t) };
+        const split = { x: lerp(l2.x, h1.x, t), y: lerp(l2.y, h1.y, t) };
         
         const newAnchor = new Two.Anchor(split.x, split.y, 0, 0, 0, 0, Two.Commands.curve);
         newAnchor.controls.left.x = l2.x - split.x;
@@ -305,6 +604,8 @@ class CanvasEngine {
         return false;
     }
 
+    // --- Interaction Handlers ---
+
     handleDown(x: number, y: number) {
         const now = Date.now();
         if (now - this.lastClickTime < 300) {
@@ -341,18 +642,11 @@ class CanvasEngine {
             }
         } else if (this.tool === 'select') {
             this.selectedShape = null;
+            let found = false;
+            let selectionType: 'primitive' | 'path' | null = null;
 
             if (this.settings.selectionMode === 'layer') {
-                 for (let i = group.children.length - 1; i >= 0; i--) {
-                    const child = group.children[i];
-                    if (!(child instanceof Two.Shape)) continue;
-                    const bounds = child.getBoundingClientRect(true);
-                    if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
-                         this.selectedShape = group;
-                         this.dragOffset = { x: x - group.translation.x, y: y - group.translation.y };
-                         break;
-                    }
-                }
+                 // Selection at group level would require scene traversal, ignoring for now as groups map to layers
             } else {
                 for (let i = group.children.length - 1; i >= 0; i--) {
                     const child = group.children[i];
@@ -362,11 +656,55 @@ class CanvasEngine {
                     if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
                         this.selectedShape = child;
                         this.dragOffset = { x: local.x - child.translation.x, y: local.y - child.translation.y };
+                        found = true;
+
+                        // Determine type for flattening
+                        if (child instanceof Two.Rectangle || child instanceof Two.Ellipse || child instanceof Two.Polygon || child instanceof Two.Star || child instanceof Two.Line) {
+                            selectionType = 'primitive';
+                        } else if (child instanceof Two.Path) {
+                            selectionType = 'path';
+                        }
                         break;
                     }
                 }
             }
+            if (found && this.selectedShape) {
+                if (this.onSelectionPropertiesChange) {
+                    const shape = this.selectedShape;
+                    const stroke = shape.stroke;
+                    const fill = shape.fill;
+            
+                    const strokeIsTransparent = stroke === 'transparent';
+                    const fillIsTransparent = fill === 'transparent';
+            
+                    const strokeColorStr = !strokeIsTransparent && typeof stroke === 'object' && stroke !== null && 'toHexString' in stroke 
+                        ? (stroke as any).toHexString() 
+                        : typeof stroke === 'string' ? stroke : this.settings.strokeColor;
+                    
+                    const fillColorStr = !fillIsTransparent && typeof fill === 'object' && fill !== null && 'toHexString' in fill
+                        ? (fill as any).toHexString()
+                        : typeof fill === 'string' ? fill : this.settings.fillColor;
+            
+                    this.onSelectionPropertiesChange({
+                        strokeEnabled: !strokeIsTransparent,
+                        strokeColor: strokeIsTransparent ? this.settings.strokeColor : strokeColorStr,
+                        fillEnabled: !fillIsTransparent,
+                        fillColor: fillIsTransparent ? this.settings.fillColor : fillColorStr,
+                        strokeWidth: shape.linewidth,
+                        lineCap: 'cap' in shape ? (shape as any).cap : this.settings.lineCap,
+                        lineJoin: 'join' in shape ? (shape as any).join : this.settings.lineJoin,
+                    });
+                }
+            } else {
+                this.selectedShape = null;
+                selectionType = null;
+            }
+
             this.updateSelectionHandles();
+            if (this.onSelectionTypeChange) {
+                this.onSelectionTypeChange(selectionType);
+            }
+
         } else if (this.tool === 'pen') {
             this.handlePenDown(local.x, local.y, group);
         } else if (this.tool === 'brush') {
@@ -378,6 +716,8 @@ class CanvasEngine {
             path.join = this.settings.lineJoin;
             group.add(path);
             this.currentPath = path;
+        } else if (this.tool === 'shape') {
+            this.handleShapeDown(local.x, local.y, group, x, y);
         }
     }
 
@@ -401,6 +741,8 @@ class CanvasEngine {
             }
         } else if (this.tool === 'pen') {
             this.handlePenMove(local.x, local.y);
+        } else if (this.tool === 'shape') {
+            this.handleShapeMove(local.x, local.y, x, y);
         }
     }
 
@@ -411,9 +753,110 @@ class CanvasEngine {
             if (this.penInteraction.mode === 'creating' || this.penInteraction.mode !== 'idle') {
                  this.penInteraction.mode = 'idle';
             }
+        } else if (this.tool === 'shape') {
+            this.handleShapeUp();
         }
     }
+
+    // --- Shape Tool Implementation ---
+
+    handleShapeDown(localX: number, localY: number, group: Two.Group, globalX: number, globalY: number) {
+        if (this.settings.shapeMode === 'insert') {
+            this.shapeOrigin = { x: localX, y: localY };
+            const { shapeType } = this.settings;
+
+            let shape: any;
+            if (shapeType === 'rectangle') {
+                shape = new Two.Rectangle(localX, localY, 0, 0);
+            } else if (shapeType === 'ellipse') {
+                shape = new Two.Ellipse(localX, localY, 0, 0);
+            } else if (shapeType === 'star') {
+                shape = new Two.Star(localX, localY, 0, 0, this.settings.starPoints);
+            } else if (shapeType === 'polygon') {
+                shape = new Two.Polygon(localX, localY, 0, this.settings.polygonSides);
+            } else if (shapeType === 'line') {
+                shape = new Two.Line(localX, localY, localX, localY);
+            }
+
+            if (shape) {
+                shape.fill = this.settings.fillEnabled ? this.settings.fillColor : 'transparent';
+                shape.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : 'transparent';
+                shape.linewidth = this.settings.strokeWidth;
+                group.add(shape);
+                this.tempShape = shape;
+            }
+        } else if (this.settings.shapeMode === 'build') {
+             // Start Build Selection Path
+             // Use a temporary overlay group for visual feedback, not added to layer content yet
+             if (!this.buildPath) {
+                 this.buildPath = new Two.Path([new Two.Anchor(globalX, globalY)], false, true);
+                 this.buildPath.linewidth = 2;
+                 this.buildPath.dashes = [4, 4];
+                 this.buildPath.noFill();
+                 
+                 // Feedback color based on mode
+                 if (this.settings.buildMode === 'subtract') {
+                    this.buildPath.stroke = '#FF453A'; // Red for subtract
+                 } else {
+                    this.buildPath.stroke = '#E67C00'; // Orange for merge
+                 }
+                 
+                 this.two.add(this.buildPath); // Add to scene root, not layer
+             }
+        }
+    }
+
+    handleShapeMove(localX: number, localY: number, globalX: number, globalY: number) {
+        if (this.settings.shapeMode === 'insert' && this.tempShape) {
+            const dx = localX - this.shapeOrigin.x;
+            const dy = localY - this.shapeOrigin.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (this.tempShape instanceof Two.Rectangle) {
+                this.tempShape.width = Math.abs(dx * 2);
+                this.tempShape.height = Math.abs(dy * 2);
+                // Apply Corner Radius if Rectangle
+                // Note: Two.js properties might vary slightly by version, checking support
+                // In Two.js, Rectangle is separate from RoundedRectangle usually, but basic Rectangle doesn't support radius dynamic
+                // Actually we should have created RoundedRectangle if radius > 0. 
+                // For this prototype, we'll keep it simple. If simple rect, ok.
+            } else if (this.tempShape instanceof Two.Ellipse) {
+                this.tempShape.width = Math.abs(dx * 2);
+                this.tempShape.height = Math.abs(dy * 2);
+            } else if (this.tempShape instanceof Two.Star) {
+                this.tempShape.innerRadius = dist * this.settings.starInnerRadius;
+                this.tempShape.outerRadius = dist;
+            } else if (this.tempShape instanceof Two.Polygon) {
+                this.tempShape.radius = dist;
+            } else if (this.tempShape instanceof Two.Line) {
+                this.tempShape.vertices[1].x = localX;
+                this.tempShape.vertices[1].y = localY;
+            }
+        } else if (this.settings.shapeMode === 'build' && this.buildPath) {
+             this.buildPath.vertices.push(new Two.Anchor(globalX, globalY));
+        }
+    }
+
+    handleShapeUp() {
+        if (this.settings.shapeMode === 'insert') {
+            if (this.tempShape) {
+                // If rectangle and corner radius > 0, we might need to swap it for a RoundedRectangle?
+                // Two.js doesn't easily swap. For now, we assume standard primitives.
+                this.tempShape = null;
+            }
+        } else if (this.settings.shapeMode === 'build') {
+            // Finish selection
+            if (this.buildPath) {
+                this.performBuildOperation();
+                this.buildPath.remove();
+                this.buildPath = null;
+            }
+        }
+    }
+
     
+    // --- Pen Tool Implementation ---
+
     handlePenDown(x: number, y: number, group: Two.Group) {
         const HIT_RADIUS = 12;
 
@@ -645,6 +1088,8 @@ interface StageProps {
   toolSettings: ToolSettings;
   onToolChange?: (tool: Tool) => void;
   onAnchorSelect?: (isSelected: boolean) => void;
+  onSelectionTypeChange?: (type: 'primitive' | 'path' | null) => void;
+  onSelectionPropertiesChange?: (properties: Partial<ToolSettings>) => void;
 }
 
 export interface StageHandle {
@@ -653,6 +1098,8 @@ export interface StageHandle {
     deleteSelectedAnchor: () => void;
     setAnchorSharp: () => void;
     setPathClosed: (closed: boolean) => void;
+    flattenSelectedShape: () => void;
+    duplicateLayerContent: (originalId: string, newId: string) => void;
 }
 
 const Stage = forwardRef<StageHandle, StageProps>(({ 
@@ -662,6 +1109,8 @@ const Stage = forwardRef<StageHandle, StageProps>(({
     toolSettings,
     onToolChange,
     onAnchorSelect,
+    onSelectionTypeChange,
+    onSelectionPropertiesChange,
 }, ref) => {
   const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -704,8 +1153,8 @@ const Stage = forwardRef<StageHandle, StageProps>(({
   }, [toolSettings]);
 
   useEffect(() => {
-    engineRef.current?.setCallbacks({ onToolChange, onAnchorSelect });
-  }, [onToolChange, onAnchorSelect]);
+    engineRef.current?.setCallbacks({ onToolChange, onAnchorSelect, onSelectionTypeChange, onSelectionPropertiesChange });
+  }, [onToolChange, onAnchorSelect, onSelectionTypeChange, onSelectionPropertiesChange]);
 
 
   useImperativeHandle(ref, () => ({
@@ -758,6 +1207,12 @@ const Stage = forwardRef<StageHandle, StageProps>(({
       },
       setPathClosed: (closed: boolean) => {
           engineRef.current?.setPathClosed(closed);
+      },
+      flattenSelectedShape: () => {
+          engineRef.current?.flattenSelectedShape();
+      },
+      duplicateLayerContent: (originalId, newId) => {
+          engineRef.current?.duplicateLayerContent(originalId, newId);
       }
   }));
 

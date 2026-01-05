@@ -15,6 +15,7 @@ interface ToolbarProps {
 
 const TOOLS = [
     { id: 'select' as Tool, icon: 'ph-cursor-click', label: 'Select' },
+    { id: 'shape' as Tool, icon: 'ph-shapes', label: 'Shapes' },
     { id: 'brush' as Tool, icon: 'ph-paint-brush-broad', label: 'Brush' },
     { id: 'pen' as Tool, icon: 'ph-pen-nib', label: 'Pen' },
     { id: 'delete' as Tool, icon: 'ph-trash', label: 'Delete Vector' },

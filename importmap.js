@@ -1,3 +1,4 @@
+
 {
   "imports": {
     "react": "https://esm.sh/react@18.2.0?external=react-dom",
@@ -7,6 +8,7 @@
     "three": "https://esm.sh/three@0.180.0",
     "gsap": "https://esm.sh/gsap@3.13.0",
     "framer-motion": "https://esm.sh/framer-motion@12.23.24?external=react,react-dom",
-    "two.js": "https://esm.sh/two.js@0.8.14"
+    "two.js": "https://esm.sh/two.js@0.8.14",
+    "paper": "https://esm.sh/paper@0.12.17"
   }
 }

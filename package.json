@@ -14,7 +14,8 @@
     "react-dom": "^19.2.3",
     "framer-motion": "^12.23.26",
     "three": "^0.182.0",
-    "two.js": "^0.8.23"
+    "two.js": "^0.8.23",
+    "paper": "^0.12.18"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

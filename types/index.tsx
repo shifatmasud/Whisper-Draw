@@ -21,7 +21,7 @@ export type BlendMode =
   | 'source-over' | 'multiply' | 'screen' | 'overlay' | 'darken' 
   | 'lighten' | 'color-dodge' | 'color-burn' | 'hard-light' 
   | 'soft-light' | 'difference' | 'exclusion' | 'hue' 
-  | 'saturation' | 'color' | 'luminosity';
+  | 'saturation' | 'color' | 'luminosity' | 'destination-out';
 
 export interface Layer {
     id: string;
@@ -37,12 +37,17 @@ export interface Layer {
 }
 
 // --- Tooling ---
-export type Tool = 'select' | 'brush' | 'delete' | 'pen' | 'eraser' | 'fill';
+export type Tool = 'select' | 'brush' | 'delete' | 'pen' | 'eraser' | 'fill' | 'shape';
 export type SelectionMode = 'vector' | 'layer';
 
 export type LineCap = 'butt' | 'round' | 'square';
 export type LineJoin = 'bevel' | 'round' | 'miter';
 export type PenHandleMode = 'mirrored' | 'disconnected';
+
+// Shape Tool Types
+export type ShapeType = 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'star';
+export type ShapeMode = 'insert' | 'build';
+export type BuildMode = 'merge' | 'subtract';
 
 export interface ToolSettings {
     strokeColor: string;
@@ -58,6 +63,14 @@ export interface ToolSettings {
     // Pen Specific
     penHandleMode: PenHandleMode;
     penClosePath: boolean;
+    // Shape Tool Specific
+    shapeType: ShapeType;
+    shapeMode: ShapeMode;
+    buildMode: BuildMode;
+    cornerRadius: number;
+    starPoints: number;
+    starInnerRadius: number; // 0 to 1
+    polygonSides: number;
 }
 
 // --- Engine Events ---

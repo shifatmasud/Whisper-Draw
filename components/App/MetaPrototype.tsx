@@ -32,18 +32,28 @@ const MetaPrototype = () => {
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [isAnchorSelected, setIsAnchorSelected] = useState(false);
+  const [selectedObjectType, setSelectedObjectType] = useState<'primitive' | 'path' | null>(null);
+  
   const [toolSettings, setToolSettings] = useState<ToolSettings>({
     strokeColor: '#000000',
     fillColor: '#EF476F',
-    strokeWidth: 10,
+    strokeWidth: 4,
     opacity: 1,
     lineCap: 'round',
     lineJoin: 'round',
     strokeEnabled: true,
-    fillEnabled: false,
+    fillEnabled: true,
     selectionMode: 'vector',
     penHandleMode: 'mirrored',
     penClosePath: false,
+    // Shape Tool Defaults
+    shapeType: 'rectangle',
+    shapeMode: 'insert',
+    buildMode: 'merge',
+    cornerRadius: 16,
+    starPoints: 5,
+    starInnerRadius: 0.5,
+    polygonSides: 6,
   });
 
   // --- Window Management ---
@@ -118,8 +128,12 @@ const MetaPrototype = () => {
     });
   }, []);
 
-  // Actions trigger from Properties Panel for Pen tool
-  const handlePenAction = useCallback((action: string) => {
+  const handleSelectionPropertiesChange = useCallback((properties: Partial<ToolSettings>) => {
+    setToolSettings(prev => ({ ...prev, ...properties }));
+  }, []);
+
+  // Actions trigger from Properties Panel for Pen tool and Selection
+  const handleStageAction = useCallback((action: string) => {
       if (!stageRef.current) return;
       
       switch (action) {
@@ -132,6 +146,9 @@ const MetaPrototype = () => {
               break;
           case 'sharpAnchor':
               stageRef.current.setAnchorSharp();
+              break;
+          case 'flatten':
+              stageRef.current.flattenSelectedShape();
               break;
       }
   }, []);
@@ -150,17 +167,28 @@ const MetaPrototype = () => {
   }, []);
 
   const handleDuplicateLayer = useCallback((id: string) => {
+    const newLayerId = `layer-${Date.now()}`;
+    
+    // Command the canvas engine to duplicate the visual content first.
+    stageRef.current?.duplicateLayerContent(id, newLayerId);
+
+    // Then, update the React state to reflect the new layer metadata.
     setLayers(prev => {
       const layerIndex = prev.findIndex(l => l.id === id);
       if (layerIndex === -1) return prev;
+      
       const originalLayer = prev[layerIndex];
       const newLayer: Layer = {
-        ...originalLayer,
-        id: `layer-${Date.now()}`,
+        ...originalLayer, // Inherit properties
+        id: newLayerId,
         name: `${originalLayer.name} Copy`,
       };
+
       const newLayers = [...prev];
-      newLayers.splice(layerIndex + 1, 0, newLayer);
+      // Place the new layer right above the original in the stack (and panel).
+      // This means inserting it at the same index, pushing the original down.
+      newLayers.splice(layerIndex, 0, newLayer);
+      
       setActiveLayerId(newLayer.id);
       return newLayers;
     });
@@ -208,6 +236,8 @@ const MetaPrototype = () => {
         toolSettings={toolSettings}
         onToolChange={setActiveTool}
         onAnchorSelect={setIsAnchorSelected}
+        onSelectionTypeChange={setSelectedObjectType}
+        onSelectionPropertiesChange={handleSelectionPropertiesChange}
       />
 
       <AnimatePresence>
@@ -225,7 +255,8 @@ const MetaPrototype = () => {
               onLayerUpdate={handleUpdateLayerProperty}
               activeTool={activeTool}
               isAnchorSelected={isAnchorSelected}
-              onPenAction={handlePenAction}
+              onPenAction={handleStageAction}
+              selectedObjectType={selectedObjectType}
             />
           </FloatingWindow>
         )}

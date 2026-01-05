@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import { useTheme } from '../../Theme.tsx';
-import { ToolSettings, Layer, Tool } from '../../types/index.tsx';
+import { ToolSettings, Layer, Tool, ShapeType, ShapeMode, BuildMode } from '../../types/index.tsx';
 import ColorPicker from '../Core/ColorPicker.tsx';
 import RangeSlider from '../Core/RangeSlider.tsx';
 import Select from '../Core/Select.tsx';
@@ -22,6 +22,7 @@ interface PropertiesPanelProps {
   activeTool: Tool;
   isAnchorSelected?: boolean;
   onPenAction?: (action: string) => void;
+  selectedObjectType?: 'primitive' | 'path' | null;
 }
 
 type Tab = 'tool' | 'layer' | 'canvas';
@@ -33,7 +34,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onLayerUpdate,
   activeTool,
   isAnchorSelected,
-  onPenAction
+  onPenAction,
+  selectedObjectType
 }) => {
   const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState<Tab>('tool');
@@ -44,10 +46,31 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const scaleValue = useMotionValue(activeLayer ? activeLayer.scale : 1);
   const rotationValue = useMotionValue(activeLayer ? activeLayer.rotation : 0);
 
+  // Shape specific motion values
+  const cornerRadiusValue = useMotionValue(toolSettings.cornerRadius);
+  const starPointsValue = useMotionValue(toolSettings.starPoints);
+  const starInnerRadiusValue = useMotionValue(toolSettings.starInnerRadius * 100);
+  const polygonSidesValue = useMotionValue(toolSettings.polygonSides);
+
   // Sync stroke width motion value with props
   useEffect(() => {
     strokeWidthValue.set(toolSettings.strokeWidth);
-  }, [toolSettings.strokeWidth, strokeWidthValue]);
+    cornerRadiusValue.set(toolSettings.cornerRadius);
+    starPointsValue.set(toolSettings.starPoints);
+    starInnerRadiusValue.set(toolSettings.starInnerRadius * 100);
+    polygonSidesValue.set(toolSettings.polygonSides);
+  }, [
+      toolSettings.strokeWidth, 
+      toolSettings.cornerRadius, 
+      toolSettings.starPoints, 
+      toolSettings.starInnerRadius, 
+      toolSettings.polygonSides, 
+      strokeWidthValue, 
+      cornerRadiusValue, 
+      starPointsValue, 
+      starInnerRadiusValue, 
+      polygonSidesValue
+  ]);
 
   // Sync active layer property motion values when activeLayer changes
   useEffect(() => {
@@ -72,6 +95,14 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     { id: 'tool', label: 'Tool', icon: 'ph-wrench' },
     { id: 'layer', label: 'Layer', icon: 'ph-stack' },
     { id: 'canvas', label: 'Canvas', icon: 'ph-bounding-box' },
+  ];
+
+  const shapes: { id: ShapeType, icon: string, label: string }[] = [
+      { id: 'rectangle', icon: 'ph-square', label: 'Rect' },
+      { id: 'ellipse', icon: 'ph-circle', label: 'Circle' },
+      { id: 'polygon', icon: 'ph-polygon', label: 'Poly' },
+      { id: 'star', icon: 'ph-star', label: 'Star' },
+      { id: 'line', icon: 'ph-line-segment', label: 'Line' },
   ];
 
   return (
@@ -123,20 +154,163 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
               exit={{ opacity: 0, x: 10 }}
               style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.M'] }}
             >
+              {/* --- SELECT TOOL --- */}
               {activeTool === 'select' && (
-                  <div style={groupStyle}>
-                      <Select 
-                          label="Selection Mode"
-                          value={toolSettings.selectionMode}
-                          onChange={(e) => onSettingChange('selectionMode', e.target.value)}
-                          options={[
-                              { value: 'vector', label: 'Vector (Deep Select)' },
-                              { value: 'layer', label: 'Layer (Group Select)' },
-                          ]}
-                      />
-                  </div>
+                  <>
+                    <div style={groupStyle}>
+                        <Select 
+                            label="Selection Mode"
+                            value={toolSettings.selectionMode}
+                            onChange={(e) => onSettingChange('selectionMode', e.target.value)}
+                            options={[
+                                { value: 'vector', label: 'Vector (Deep Select)' },
+                                { value: 'layer', label: 'Layer (Group Select)' },
+                            ]}
+                        />
+                    </div>
+                    {selectedObjectType && (
+                        <div style={groupStyle}>
+                            <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>SELECTION ACTIONS</label>
+                            {selectedObjectType === 'primitive' ? (
+                                <Button 
+                                    label="Convert to Path" 
+                                    variant="secondary" 
+                                    size="M" 
+                                    icon="ph-bezier-curve" 
+                                    onClick={() => onPenAction && onPenAction('flatten')} 
+                                />
+                            ) : (
+                                <div style={{...theme.Type.Readable.Body.S, color: theme.Color.Success.Content[1], display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                    <i className="ph-bold ph-check-circle" />
+                                    Editable Path
+                                </div>
+                            )}
+                        </div>
+                    )}
+                  </>
               )}
 
+              {/* --- SHAPE TOOL --- */}
+              {activeTool === 'shape' && (
+                  <>
+                      {/* Mode Toggle */}
+                      <div style={{ display: 'flex', gap: '4px', backgroundColor: theme.Color.Base.Surface[3], padding: '2px', borderRadius: '8px' }}>
+                          {(['insert', 'build'] as ShapeMode[]).map(mode => (
+                              <button
+                                key={mode}
+                                onClick={() => onSettingChange('shapeMode', mode)}
+                                style={{
+                                    flex: 1,
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    padding: '6px',
+                                    cursor: 'pointer',
+                                    backgroundColor: toolSettings.shapeMode === mode ? theme.Color.Base.Surface[1] : 'transparent',
+                                    color: toolSettings.shapeMode === mode ? theme.Color.Base.Content[1] : theme.Color.Base.Content[2],
+                                    ...theme.Type.Readable.Label.S,
+                                    boxShadow: toolSettings.shapeMode === mode ? theme.effects['Effect.Shadow.Drop.1'] : 'none',
+                                }}
+                              >
+                                  {mode === 'insert' ? 'INSERT' : 'BUILD'}
+                              </button>
+                          ))}
+                      </div>
+
+                      {toolSettings.shapeMode === 'insert' ? (
+                          <div style={groupStyle}>
+                              <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>SHAPE TYPE</label>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px' }}>
+                                  {shapes.map(shape => (
+                                      <button
+                                        key={shape.id}
+                                        onClick={() => onSettingChange('shapeType', shape.id)}
+                                        style={{
+                                            aspectRatio: '1/1',
+                                            border: 'none',
+                                            borderRadius: theme.radius['Radius.S'],
+                                            backgroundColor: toolSettings.shapeType === shape.id ? theme.Color.Accent.Surface[1] : theme.Color.Base.Surface[1],
+                                            color: toolSettings.shapeType === shape.id ? theme.Color.Accent.Content[1] : theme.Color.Base.Content[1],
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            fontSize: '20px'
+                                        }}
+                                        title={shape.label}
+                                      >
+                                          <i className={`ph-bold ${shape.icon}`} />
+                                      </button>
+                                  ))}
+                              </div>
+
+                              {/* Parametric Controls */}
+                              {toolSettings.shapeType === 'rectangle' && (
+                                  <RangeSlider label="Corner Radius" motionValue={cornerRadiusValue} onCommit={(v) => onSettingChange('cornerRadius', v)} min={0} max={100} />
+                              )}
+                              
+                              {toolSettings.shapeType === 'star' && (
+                                  <>
+                                    <RangeSlider label="Points" motionValue={starPointsValue} onCommit={(v) => onSettingChange('starPoints', v)} min={3} max={20} />
+                                    <RangeSlider label="Inner Radius %" motionValue={starInnerRadiusValue} onCommit={(v) => onSettingChange('starInnerRadius', v / 100)} min={10} max={90} />
+                                  </>
+                              )}
+
+                              {toolSettings.shapeType === 'polygon' && (
+                                    <RangeSlider label="Sides" motionValue={polygonSidesValue} onCommit={(v) => onSettingChange('polygonSides', v)} min={3} max={12} />
+                              )}
+                          </div>
+                      ) : (
+                          <div style={groupStyle}>
+                              <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>BUILDER MODE</label>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.S'] }}>
+                                  <button
+                                     onClick={() => onSettingChange('buildMode', 'merge')}
+                                     style={{
+                                         padding: '12px',
+                                         borderRadius: theme.radius['Radius.S'],
+                                         border: toolSettings.buildMode === 'merge' ? `2px solid ${theme.Color.Success.Content[1]}` : `1px solid ${theme.Color.Base.Surface[3]}`,
+                                         backgroundColor: theme.Color.Base.Surface[1],
+                                         textAlign: 'left',
+                                         cursor: 'pointer',
+                                         display: 'flex',
+                                         alignItems: 'center',
+                                         gap: '8px'
+                                     }}
+                                  >
+                                      <i className="ph-bold ph-exclude" style={{ color: theme.Color.Success.Content[1] }} />
+                                      <div>
+                                          <span style={theme.Type.Readable.Label.S}>Merge</span>
+                                          <p style={{ ...theme.Type.Readable.Body.S, margin: 0, color: theme.Color.Base.Content[2], fontSize: '11px' }}>Drag across shapes to combine.</p>
+                                      </div>
+                                  </button>
+                                  <button
+                                     onClick={() => onSettingChange('buildMode', 'subtract')}
+                                     style={{
+                                         padding: '12px',
+                                         borderRadius: theme.radius['Radius.S'],
+                                         border: toolSettings.buildMode === 'subtract' ? `2px solid ${theme.Color.Error.Content[1]}` : `1px solid ${theme.Color.Base.Surface[3]}`,
+                                         backgroundColor: theme.Color.Base.Surface[1],
+                                         textAlign: 'left',
+                                         cursor: 'pointer',
+                                         display: 'flex',
+                                         alignItems: 'center',
+                                         gap: '8px'
+                                     }}
+                                  >
+                                      <i className="ph-bold ph-intersect" style={{ color: theme.Color.Error.Content[1] }} />
+                                      <div>
+                                          <span style={theme.Type.Readable.Label.S}>Subtract</span>
+                                          <p style={{ ...theme.Type.Readable.Body.S, margin: 0, color: theme.Color.Base.Content[2], fontSize: '11px' }}>Drag to remove regions.</p>
+                                      </div>
+                                  </button>
+                              </div>
+                          </div>
+                      )}
+                  </>
+              )}
+
+
+              {/* --- PEN TOOL --- */}
               {activeTool === 'pen' ? (
                 <>
                     <div style={{ ...groupStyle, borderColor: theme.Color.Success.Content[1] }}>
@@ -338,6 +512,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       { value: 'overlay', label: 'Overlay' },
                       { value: 'darken', label: 'Darken' },
                       { value: 'lighten', label: 'Lighten' },
+                      { value: 'destination-out', label: 'Eraser (Mask)' },
                     ]}
                   />
                   <RangeSlider 
