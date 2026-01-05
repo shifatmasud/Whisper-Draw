@@ -209,22 +209,6 @@ const MetaPrototype = () => {
     stageRef.current?.duplicateLayerContent(id, newLayerId);
 
     setLayers(prev => {
-      const parentFinder = (nodes: Layer[]): { list: Layer[], index: number } | null => {
-           const idx = nodes.findIndex(n => n.id === id);
-           if (idx !== -1) return { list: nodes, index: idx };
-           for (const node of nodes) {
-               const res = parentFinder(node.children);
-               if (res) return res;
-           }
-           return null;
-      };
-
-      // Need deep clone to avoid ref issues
-      const deepClone = JSON.parse(JSON.stringify(prev));
-      // But parentFinder needs to return reference to the array in the clone
-      // Simplified: Just use updateLayerInTree approach if we knew parent. 
-      // Since we don't track parentId, let's use a recursive insertion.
-      
       const insertDuplicate = (nodes: Layer[]): Layer[] => {
           const idx = nodes.findIndex(n => n.id === id);
           if (idx !== -1) {
@@ -248,9 +232,6 @@ const MetaPrototype = () => {
   }, []);
 
   const handleReorderLayers = useCallback((reorderedLayers: Layer[]) => {
-      // This only handles root level reordering if passed directly from LayersPanel
-      // The LayersPanel now manages recursion internally or passes specific update functions
-      // We'll update the whole tree state.
       setLayers(reorderedLayers);
   }, []);
 
@@ -276,7 +257,6 @@ const MetaPrototype = () => {
           };
 
           // Replace the layer with the group containing the layer
-          // We need to find the parent array of the layer
           const replaceInTree = (nodes: Layer[]): Layer[] => {
               const idx = nodes.findIndex(n => n.id === activeLayerId);
               if (idx !== -1) {
@@ -309,6 +289,60 @@ const MetaPrototype = () => {
           
           return ungroupRecursive(prev);
       });
+  }, []);
+
+  const handleMoveLayer = useCallback((layerId: string, targetGroupId: string | null) => {
+    setLayers(prev => {
+        // 1. Find and remove layer from its current position
+        let layerToMove: Layer | null = null;
+        
+        const removeRecursive = (nodes: Layer[]): Layer[] => {
+            const filtered: Layer[] = [];
+            for (const node of nodes) {
+                if (node.id === layerId) {
+                    layerToMove = node;
+                    // Don't add to filtered -> Effectively removes it
+                } else {
+                    // Recursively check children
+                    const newChildren = removeRecursive(node.children);
+                    // Check if children changed reference to avoid unnecessary updates if not needed? 
+                    // Simpler to just map properly.
+                    if (newChildren.length !== node.children.length || newChildren !== node.children) {
+                         filtered.push({ ...node, children: newChildren });
+                    } else {
+                         filtered.push(node);
+                    }
+                }
+            }
+            return filtered;
+        };
+
+        const layersWithoutItem = removeRecursive(prev);
+        
+        if (!layerToMove) return prev; // Should not happen if logic is correct
+
+        // 2. Add to target
+        if (targetGroupId === null) {
+            // Add to root (Top of the list is visually the "top" layer in many tools, but in Two.js/rendering 0 is bottom.
+            // Let's add to top of array (Bottom of visual stack usually? Or Top? "New Layer" adds to top.)
+            return [layerToMove, ...layersWithoutItem];
+        } else {
+            // Add to group
+            const addToGroupRecursive = (nodes: Layer[]): Layer[] => {
+                return nodes.map(node => {
+                    if (node.id === targetGroupId && node.type === 'group') {
+                        // Add to beginning of children array
+                        return { ...node, children: [layerToMove!, ...node.children], isOpen: true };
+                    }
+                    if (node.children.length > 0) {
+                         return { ...node, children: addToGroupRecursive(node.children) };
+                    }
+                    return node;
+                });
+            };
+            return addToGroupRecursive(layersWithoutItem);
+        }
+    });
   }, []);
 
   const handleUpdateThumbnail = useCallback((id: string, dataUrl: string) => {
@@ -394,6 +428,7 @@ const MetaPrototype = () => {
               onContentDragEnd={handleContentDragEnd}
               onGroupSelection={handleGroupSelection}
               onUngroup={handleUngroup}
+              onMoveLayer={handleMoveLayer}
             />
           </FloatingWindow>
         )}

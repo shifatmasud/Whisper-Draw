@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -20,6 +21,12 @@ interface LayerItemProps {
     onDragEnd: () => void;
     onGroupSelection: () => void;
     onUngroup: (id: string) => void;
+    // New Drop Zone Props
+    draggedLayerId: string | null;
+    hoveredTargetId: string | null;
+    onDragItemStart: (id: string) => void;
+    onDragItemEnd: () => void;
+    onDragOver: (x: number, y: number) => void;
     children?: React.ReactNode;
 }
 
@@ -34,22 +41,31 @@ const BLEND_MODES: { value: BlendMode, label: string }[] = [
 
 const LayerItem: React.FC<LayerItemProps> = React.memo(({ 
     layer, isActive, depth = 0, onSelect, onDelete, onDuplicate, 
-    onUpdateProperty, onDragStart, onDragEnd, onGroupSelection, onUngroup, children 
+    onUpdateProperty, onDragStart, onDragEnd, onGroupSelection, onUngroup,
+    draggedLayerId, hoveredTargetId, onDragItemStart, onDragItemEnd, onDragOver,
+    children 
 }) => {
     const { theme } = useTheme();
     const dragControls = useDragControls();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
-    const [isDragging, setIsDragging] = useState(false);
+
+    const isDropTarget = draggedLayerId !== null && draggedLayerId !== layer.id && hoveredTargetId === layer.id && layer.type === 'group';
 
     const handleDragStartInternal = () => {
-        setIsDragging(true);
-        onDragStart();
+        onDragItemStart(layer.id);
     };
     
     const handleDragEndInternal = () => {
-        setIsDragging(false);
-        onDragEnd();
+        onDragItemEnd();
+    };
+    
+    // We update the drag position manually because standard mouse events are blocked by the dragged element
+    // Framer Motion's onDrag callback provides the point info
+    const handleDrag = (event: any, info: any) => {
+        if (draggedLayerId) {
+            onDragOver(info.point.x, info.point.y);
+        }
     };
 
     const itemStyle: React.CSSProperties = {
@@ -60,12 +76,15 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({
         borderRadius: theme.radius['Radius.S'],
         backgroundColor: isActive ? theme.Color.Accent.Surface[1] : theme.Color.Base.Surface[2],
         color: isActive ? theme.Color.Accent.Content[1] : theme.Color.Base.Content[1],
-        border: `1px solid ${isActive ? theme.Color.Accent.Surface[1] : theme.Color.Base.Surface[3]}`,
+        border: isDropTarget 
+            ? `2px solid ${theme.Color.Focus.Content[1]}` 
+            : `1px solid ${isActive ? theme.Color.Accent.Surface[1] : theme.Color.Base.Surface[3]}`,
         position: 'relative',
         cursor: 'pointer',
         userSelect: 'none',
         marginLeft: `${depth * 16}px`, // Indentation for tree
         transition: `background-color ${theme.time['Time.1x']} ease, border-color ${theme.time['Time.1x']} ease`,
+        boxShadow: isDropTarget ? `0 0 8px ${theme.Color.Focus.Surface[1]}` : 'none',
     };
     
     const handleMenuOpen = (e: React.MouseEvent) => {
@@ -124,7 +143,11 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({
             style={{ listStyle: 'none' }}
             onDragStart={handleDragStartInternal}
             onDragEnd={handleDragEndInternal}
+            onDrag={handleDrag} // Track drag over other items
             layout="position"
+            // Important: We attach these data attributes so elementFromPoint in parent can find us
+            data-layer-id={layer.id}
+            data-is-group={layer.type === 'group'}
         >
             <div 
                 style={itemStyle} 
