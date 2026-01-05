@@ -3,7 +3,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useTheme } from '../../Theme.tsx';
 import { Layer, BlendMode } from '../../types/index.tsx';
 import { Reorder, useDragControls } from 'framer-motion';
@@ -49,6 +49,11 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({
     const dragControls = useDragControls();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+    
+    // Rename State
+    const [isRenaming, setIsRenaming] = useState(false);
+    const [renameValue, setRenameValue] = useState(layer.name);
+    const inputRef = useRef<HTMLInputElement>(null);
 
     const isDropTarget = draggedLayerId !== null && draggedLayerId !== layer.id && hoveredTargetId === layer.id && layer.type === 'group';
 
@@ -60,8 +65,6 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({
         onDragItemEnd();
     };
     
-    // We update the drag position manually because standard mouse events are blocked by the dragged element
-    // Framer Motion's onDrag callback provides the point info
     const handleDrag = (event: any, info: any) => {
         if (draggedLayerId) {
             onDragOver(info.point.x, info.point.y);
@@ -92,8 +95,39 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({
       setMenuPosition({ x: e.clientX, y: e.clientY });
       setIsMenuOpen(true);
     };
+
+    // Rename Logic
+    useEffect(() => {
+        if (isRenaming) {
+            setRenameValue(layer.name);
+            // Slight delay to ensure DOM is ready for focus
+            setTimeout(() => {
+                inputRef.current?.focus();
+                inputRef.current?.select();
+            }, 50);
+        }
+    }, [isRenaming, layer.name]);
+
+    const handleCommitRename = () => {
+        if (renameValue.trim().length > 0 && renameValue !== layer.name) {
+            onUpdateProperty(layer.id, { name: renameValue });
+        }
+        setIsRenaming(false);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            handleCommitRename();
+        } else if (e.key === 'Escape') {
+            setIsRenaming(false);
+            setRenameValue(layer.name);
+        }
+        e.stopPropagation();
+    };
     
     const menuItems = [
+      { label: 'Rename', icon: 'ph-pencil-simple', onClick: () => { onSelect(layer.id); setIsRenaming(true); } },
+      { type: 'separator' as const },
       ...(layer.type === 'layer' ? [{
         label: 'Blending Mode',
         subItems: BLEND_MODES.map(mode => ({
@@ -191,17 +225,48 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({
                 {/* Thumbnail */}
                 <div style={thumbnailStyle} />
 
-                {/* Layer Name */}
-                <span style={{ 
-                    flex: 1, 
-                    ...theme.Type.Readable.Label.M, 
-                    whiteSpace: 'nowrap', 
-                    overflow: 'hidden', 
-                    textOverflow: 'ellipsis',
-                    fontWeight: isActive ? 600 : 400
-                }}>
-                    {layer.name}
-                </span>
+                {/* Layer Name / Renaming Input */}
+                {isRenaming ? (
+                    <input
+                        ref={inputRef}
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={handleCommitRename}
+                        onKeyDown={handleKeyDown}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            flex: 1,
+                            minWidth: 0,
+                            border: `1px solid ${theme.Color.Focus.Content[1]}`,
+                            borderRadius: theme.radius['Radius.S'],
+                            padding: '0 4px',
+                            backgroundColor: theme.Color.Base.Surface[1],
+                            color: theme.Color.Base.Content[1],
+                            fontFamily: theme.Type.Readable.Label.M.fontFamily,
+                            fontSize: '12px',
+                            lineHeight: '16px',
+                            outline: 'none',
+                        }}
+                    />
+                ) : (
+                    <span 
+                        onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            onSelect(layer.id);
+                            setIsRenaming(true);
+                        }}
+                        style={{ 
+                            flex: 1, 
+                            ...theme.Type.Readable.Label.M, 
+                            whiteSpace: 'nowrap', 
+                            overflow: 'hidden', 
+                            textOverflow: 'ellipsis',
+                            fontWeight: isActive ? 600 : 400
+                        }}
+                    >
+                        {layer.name}
+                    </span>
+                )}
 
                 {/* Context Menu Trigger */}
                 <div onClick={handleMenuOpen} style={iconStyle}>
