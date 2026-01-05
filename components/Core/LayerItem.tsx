@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -125,6 +124,7 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({
             style={{ listStyle: 'none' }}
             onDragStart={handleDragStartInternal}
             onDragEnd={handleDragEndInternal}
+            layout="position"
         >
             <div 
                 style={itemStyle} 
