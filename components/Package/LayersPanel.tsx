@@ -1,8 +1,9 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { useTheme } from '../../Theme.tsx';
 import { Layer } from '../../types/index.tsx';
 import LayerItem from '../Core/LayerItem.tsx';
@@ -20,7 +21,87 @@ interface LayersPanelProps {
     onReorderLayers: (layers: Layer[]) => void;
     onContentDragStart: () => void;
     onContentDragEnd: () => void;
+    onGroupSelection: () => void;
+    onUngroup: (id: string) => void;
 }
+
+// Recursive Layer List Component
+const LayerList: React.FC<{
+    layers: Layer[];
+    onReorder: (layers: Layer[]) => void;
+    depth?: number;
+    parent?: Layer;
+    // Pass-through props
+    activeLayerId: string | null;
+    onSelectLayer: (id: string) => void;
+    onDeleteLayer: (id: string) => void;
+    onDuplicateLayer: (id: string) => void;
+    onUpdateLayerProperty: (id: string, properties: Partial<Layer>) => void;
+    onContentDragStart: () => void;
+    onContentDragEnd: () => void;
+    onGroupSelection: () => void;
+    onUngroup: (id: string) => void;
+}> = ({ layers, onReorder, depth = 0, activeLayerId, onSelectLayer, onDeleteLayer, onDuplicateLayer, onUpdateLayerProperty, onContentDragStart, onContentDragEnd, onGroupSelection, onUngroup }) => {
+    
+    // Wrapper to handle reordering specific to this level
+    // When a sub-list reorders, we need to bubble up the change?
+    // Actually, Reorder.Group `values` prop matches state. 
+    // If we update the state tree correctly, React re-renders this list.
+    
+    return (
+        <Reorder.Group
+            axis="y"
+            values={layers}
+            onReorder={onReorder}
+            style={{
+                listStyle: 'none',
+                padding: 0,
+                margin: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px'
+            }}
+        >
+            {layers.map(layer => (
+                <LayerItem
+                    key={layer.id}
+                    layer={layer}
+                    isActive={layer.id === activeLayerId}
+                    depth={depth}
+                    onSelect={onSelectLayer}
+                    onDelete={onDeleteLayer}
+                    onDuplicate={onDuplicateLayer}
+                    onUpdateProperty={onUpdateLayerProperty}
+                    onDragStart={onContentDragStart}
+                    onDragEnd={onContentDragEnd}
+                    onGroupSelection={onGroupSelection}
+                    onUngroup={onUngroup}
+                >
+                    {layer.type === 'group' && layer.isOpen && layer.children && (
+                        <LayerList 
+                            layers={layer.children}
+                            onReorder={(newChildren) => {
+                                // Update this specific layer's children in the parent's handler?
+                                // No, we call onUpdateProperty for THIS layer to update its children.
+                                onUpdateLayerProperty(layer.id, { children: newChildren });
+                            }}
+                            depth={depth + 1}
+                            activeLayerId={activeLayerId}
+                            onSelectLayer={onSelectLayer}
+                            onDeleteLayer={onDeleteLayer}
+                            onDuplicateLayer={onDuplicateLayer}
+                            onUpdateLayerProperty={onUpdateLayerProperty}
+                            onContentDragStart={onContentDragStart}
+                            onContentDragEnd={onContentDragEnd}
+                            onGroupSelection={onGroupSelection}
+                            onUngroup={onUngroup}
+                        />
+                    )}
+                </LayerItem>
+            ))}
+        </Reorder.Group>
+    );
+};
 
 const LayersPanel: React.FC<LayersPanelProps> = ({ 
     layers, 
@@ -33,84 +114,58 @@ const LayersPanel: React.FC<LayersPanelProps> = ({
     onReorderLayers,
     onContentDragStart,
     onContentDragEnd,
+    onGroupSelection,
+    onUngroup,
 }) => {
     const { theme } = useTheme();
-    const [isReordering, setIsReordering] = useState(false);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-    const handleDragStart = () => {
-        setIsReordering(true);
-        onContentDragStart();
-    };
-
-    const handleDragEnd = () => {
-        setIsReordering(false);
-        onContentDragEnd();
-    };
-
-    // Temporarily disable scrolling on the container during drag to prevent conflict
-    useEffect(() => {
-        const scrollContainer = scrollContainerRef.current;
-        if (scrollContainer) {
-            scrollContainer.style.overflowY = isReordering ? 'hidden' : 'auto';
-        }
-    }, [isReordering]);
-
-    // The `layers` prop is now already in the correct visual order (top-to-bottom).
-    // No reversal logic is needed, which simplifies the component and fixes the bug.
-
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.M'] }}>
-            {/* Scroll Wrapper: Reorder.Group often fails if it is its own scroll container */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.M'], height: '100%' }}>
+            {/* Scroll Wrapper */}
             <div 
                 ref={scrollContainerRef}
                 style={{ 
-                    maxHeight: '350px', 
+                    flex: 1, 
                     overflowY: 'auto', 
                     paddingRight: '4px',
                     paddingBottom: '8px',
                     scrollbarWidth: 'thin',
                     scrollbarColor: `${theme.Color.Base.Surface[3]} transparent`,
-                    transition: 'overflow 0.2s' // Smooth transition for scrollbar visibility
                 }}
             >
-                <Reorder.Group
-                    axis="y"
-                    values={layers}
+                <LayerList
+                    layers={layers}
                     onReorder={onReorderLayers}
-                    style={{
-                        listStyle: 'none',
-                        padding: 0,
-                        margin: 0,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '4px'
-                    }}
-                >
-                    {layers.map(layer => (
-                        <LayerItem
-                            key={layer.id}
-                            layer={layer}
-                            isActive={layer.id === activeLayerId}
-                            onSelect={onSelectLayer}
-                            onDelete={onDeleteLayer}
-                            onDuplicate={onDuplicateLayer}
-                            onUpdateProperty={onUpdateLayerProperty}
-                            onDragStart={handleDragStart}
-                            onDragEnd={handleDragEnd}
-                            isReordering={isReordering}
-                        />
-                    ))}
-                </Reorder.Group>
+                    activeLayerId={activeLayerId}
+                    onSelectLayer={onSelectLayer}
+                    onDeleteLayer={onDeleteLayer}
+                    onDuplicateLayer={onDuplicateLayer}
+                    onUpdateLayerProperty={onUpdateLayerProperty}
+                    onContentDragStart={onContentDragStart}
+                    onContentDragEnd={onContentDragEnd}
+                    onGroupSelection={onGroupSelection}
+                    onUngroup={onUngroup}
+                />
             </div>
             
-            <Button
-                label="Add Layer"
-                icon="ph-plus"
-                variant="secondary"
-                size="M"
-                onClick={onAddLayer}
-            />
+            <div style={{ borderTop: `1px solid ${theme.Color.Base.Surface[3]}`, paddingTop: theme.spacing['Space.S'], display: 'flex', gap: '8px' }}>
+                <Button
+                    label="Add Layer"
+                    icon="ph-plus"
+                    variant="secondary"
+                    size="S"
+                    onClick={onAddLayer}
+                />
+                 <Button
+                    label="Group"
+                    icon="ph-folder-plus"
+                    variant="ghost"
+                    size="S"
+                    onClick={onGroupSelection}
+                    disabled={!activeLayerId}
+                />
+            </div>
         </div>
     );
 };

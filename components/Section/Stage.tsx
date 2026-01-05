@@ -19,6 +19,7 @@ const lerpV = (v1: {x: number, y: number}, v2: {x: number, y: number}, t: number
  */
 class CanvasEngine {
     two: Two;
+    thumbTwo: Two; // Secondary instance for thumbnails
     paperScope: paper.PaperScope;
     groups: Map<string, Two.Group> = new Map();
     activeLayerId: string | null = null;
@@ -30,6 +31,7 @@ class CanvasEngine {
     onAnchorSelect?: (isSelected: boolean) => void;
     onSelectionTypeChange?: (type: SelectedObjectType) => void;
     onSelectionPropertiesChange?: (properties: Partial<ToolSettings>) => void;
+    onThumbnailReady?: (id: string, dataUrl: string) => void;
     
     // Selection & Transform State
     selectedShape: any | null = null; 
@@ -74,6 +76,16 @@ class CanvasEngine {
             height: container.clientHeight,
             autostart: true,
         }).appendTo(container);
+
+        // Thumbnail Generator Instance (Hidden)
+        const thumbCanvas = document.createElement('canvas');
+        this.thumbTwo = new Two({
+            type: Two.Types.canvas,
+            width: 100,
+            height: 100,
+            domElement: thumbCanvas,
+            autostart: false
+        });
 
         // Initialize Headless Paper.js Scope for Math
         this.paperScope = new paper.PaperScope();
@@ -143,39 +155,83 @@ class CanvasEngine {
         this.onAnchorSelect = callbacks.onAnchorSelect;
         this.onSelectionTypeChange = callbacks.onSelectionTypeChange;
         this.onSelectionPropertiesChange = callbacks.onSelectionPropertiesChange;
+        this.onThumbnailReady = callbacks.onThumbnailReady;
     }
     
+    // Recursive layer update to handle groups
     public updateLayers(layers: Layer[]) {
-        layers.forEach(layer => {
+        const activeIds = new Set<string>();
+
+        const processLayer = (layer: Layer, parent: Two.Group | Two.Scene) => {
+            activeIds.add(layer.id);
+            
             if (!this.groups.has(layer.id)) {
                 const group = new Two.Group();
                 group.id = layer.id;
                 this.groups.set(layer.id, group);
-                this.two.add(group);
+                parent.add(group);
             }
+            
             const group = this.groups.get(layer.id)!;
+            // Reparent if needed (handle move between groups)
+            if (group.parent !== parent) {
+                if (group.parent) group.parent.remove(group);
+                parent.add(group);
+            }
+
             group.visible = layer.isVisible;
             group.opacity = layer.opacity;
             group.blendMode = layer.blendMode;
-            
             group.translation.set(layer.x, layer.y);
             group.scale = layer.scale;
             group.rotation = (layer.rotation * Math.PI) / 180;
-        });
+            
+            // Process children
+            if (layer.children) {
+                layer.children.forEach(child => processLayer(child, group));
+            }
+        };
 
-        const activeIds = new Set(layers.map(l => l.id));
+        // Re-ordering logic:
+        const syncOrder = (items: Layer[], parent: Two.Group | Two.Scene) => {
+            // Iterate in reverse for Two.js drawing order (first drawn is bottom)
+            for (let i = items.length - 1; i >= 0; i--) {
+                const layer = items[i];
+                activeIds.add(layer.id);
+                
+                let group = this.groups.get(layer.id);
+                if (!group) {
+                    group = new Two.Group();
+                    group.id = layer.id;
+                    this.groups.set(layer.id, group);
+                }
+                
+                // Ensure correct parent and position (Add moves to end/top)
+                parent.add(group);
+                
+                // Update properties
+                group.visible = layer.isVisible;
+                group.opacity = layer.opacity;
+                group.blendMode = layer.blendMode;
+                group.translation.set(layer.x, layer.y);
+                group.scale = layer.scale;
+                group.rotation = (layer.rotation * Math.PI) / 180;
+
+                // Sync Children
+                if (layer.children) {
+                    syncOrder(layer.children, group);
+                }
+            }
+        };
+
+        syncOrder(layers, this.two.scene);
+
+        // Cleanup removed layers
         this.groups.forEach((g, id) => {
             if (!activeIds.has(id)) {
-                this.two.remove(g);
+                g.remove();
                 this.groups.delete(id);
             }
-        });
-        
-        // Z-Index ordering
-        layers.forEach((l) => {
-            const g = this.groups.get(l.id)!;
-            this.two.scene.remove(g);
-            this.two.scene.add(g);
         });
 
         // Ensure overlays are on top
@@ -197,12 +253,63 @@ class CanvasEngine {
         }
     }
 
+    public generateThumbnail(layerId: string) {
+        const group = this.groups.get(layerId);
+        if (!group) return;
+
+        // Clone the group to avoid disturbing the main scene
+        const clone = (group as any).clone();
+        
+        // Reset transform for thumbnailing
+        clone.translation.set(0, 0);
+        clone.scale = 1;
+        clone.rotation = 0;
+        
+        // Setup thumb scene
+        this.thumbTwo.clear();
+        this.thumbTwo.add(clone);
+        
+        // Calculate bounds to fit
+        const bounds = clone.getBoundingClientRect();
+        const maxDim = Math.max(bounds.width, bounds.height);
+        const padding = 10;
+        
+        if (maxDim > 0) {
+            const scale = (this.thumbTwo.width - padding) / maxDim;
+            clone.scale = scale;
+            
+            // Center it
+            const bbox = clone.getBoundingClientRect();
+            const bx = bbox.left + bbox.width / 2;
+            const by = bbox.top + bbox.height / 2;
+            
+            const dx = (this.thumbTwo.width / 2) - bx;
+            const dy = (this.thumbTwo.height / 2) - by;
+            
+            clone.translation.addSelf(new Two.Vector(dx, dy));
+        } else {
+             // Empty layer
+             clone.translation.set(this.thumbTwo.width/2, this.thumbTwo.height/2);
+        }
+        
+        this.thumbTwo.render();
+        const dataUrl = this.thumbTwo.renderer.domElement.toDataURL('image/png', 0.5);
+        
+        if (this.onThumbnailReady) {
+            this.onThumbnailReady(layerId, dataUrl);
+        }
+    }
+
     // --- Core Methods ---
     
     public destroy() {
         this.two.pause();
         if (this.two.renderer.domElement) {
             this.two.renderer.domElement.remove();
+        }
+        // Cleanup thumb renderer
+        if (this.thumbTwo.renderer.domElement) {
+            this.thumbTwo.renderer.domElement.remove();
         }
     }
 
@@ -253,7 +360,8 @@ class CanvasEngine {
         const newGroup = (originalGroup as any).clone();
         newGroup.id = newId;
         this.groups.set(newId, newGroup);
-        this.two.add(newGroup);
+        // Parent logic handled in next updateLayers call, but for immediate consistency:
+        if (originalGroup.parent) originalGroup.parent.add(newGroup);
     }
     
     // --- Shape Builder (Build Mode) Logic ---
@@ -474,6 +582,9 @@ class CanvasEngine {
         // Reset Build State
         this.buildState.isActive = false; 
         this.exitBuildMode();
+        
+        // Trigger thumbnail update for this layer
+        if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
     }
 
 
@@ -553,24 +664,14 @@ class CanvasEngine {
             this.selectedShape = newShape;
             this.updateSelectionHandles();
             if (this.onSelectionTypeChange) this.onSelectionTypeChange('path');
+            if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
         }
     }
     
     // --- Boolean Operations Bridge ---
     private twoMatrixToPaperMatrix(twoMatrix: Two.Matrix): paper.Matrix {
         const m = twoMatrix.elements;
-        // two.js matrix elements (column-major from THREE.Matrix3): 
-        // [m11, m21, m31, m12, m22, m32, m13, m23, m33]
-        // [ a,   b,  0,   c,   d,  0,  tx,  ty,  1 ]
-        // paper.js matrix constructor: new Matrix(a, b, c, d, tx, ty)
-        // a=sx*cos, b=sx*sin, c=-sy*sin, d=sy*cos
-        const a = m[0];  // sx * cos
-        const b = -m[3]; // sx * sin (two.js stores -sx*sin at m[3])
-        const c = m[1];  // -sy * sin (two.js stores sy*sin at m[1])
-        const d = m[4];  // sy * cos
-        const tx = m[6];
-        const ty = m[7];
-        return new this.paperScope.Matrix(a, b, c, d, tx, ty);
+        return new this.paperScope.Matrix(m[0], m[1], m[3], m[4], m[6], m[7]);
     }
 
     private twoPathToPaperPath(twoPath: Two.Path): paper.PathItem {
@@ -588,20 +689,36 @@ class CanvasEngine {
         return path;
     }
 
-    private paperPathToTwoPath(paperPath: paper.Path, targetGroup: Two.Group, styleSource: Two.Path | null): Two.Path {
-        const vertices: Two.Anchor[] = paperPath.segments.map((segment, index) => {
-            // The first vertex must be a "move" command for the path to render correctly.
-            const command = index === 0 ? Two.Commands.move : Two.Commands.curve;
-            return new Two.Anchor(
-                segment.point.x, segment.point.y,
-                segment.handleIn.x, segment.handleIn.y,
-                segment.handleOut.x, segment.handleOut.y,
-                command
-            );
+    private importPaperItemToTwo(paperItem: paper.Item, targetGroup: Two.Group, styleSource: Two.Path | null): Two.Path | null {
+        const allPaths: paper.Path[] = [];
+    
+        if (paperItem instanceof this.paperScope.Path) {
+            allPaths.push(paperItem);
+        } else if (paperItem instanceof this.paperScope.CompoundPath) {
+            paperItem.children.forEach(child => {
+                if (child instanceof this.paperScope.Path) {
+                    allPaths.push(child);
+                }
+            });
+        }
+    
+        if (allPaths.length === 0) return null;
+    
+        const combinedVertices: Two.Anchor[] = [];
+        allPaths.forEach(pPath => {
+            pPath.segments.forEach((segment, index) => {
+                const command = index === 0 ? Two.Commands.move : Two.Commands.curve;
+                combinedVertices.push(new Two.Anchor(
+                    segment.point.x, segment.point.y,
+                    segment.handleIn.x, segment.handleIn.y,
+                    segment.handleOut.x, segment.handleOut.y,
+                    command
+                ));
+            });
         });
     
-        const twoPath = new Two.Path(vertices, paperPath.closed, true, true);
-        
+        const twoPath = new Two.Path(combinedVertices, allPaths[0].closed, true, true);
+    
         if (styleSource) {
             twoPath.fill = styleSource.fill;
             twoPath.stroke = styleSource.stroke;
@@ -612,22 +729,6 @@ class CanvasEngine {
     
         targetGroup.add(twoPath);
         return twoPath;
-    }
-
-    private importPaperItemToTwo(paperItem: paper.Item, targetGroup: Two.Group, styleSource: Two.Path | null): Two.Path | null {
-        if (paperItem instanceof this.paperScope.CompoundPath) {
-            let primaryShape: Two.Path | null = null;
-            paperItem.children.forEach(child => {
-                if (child instanceof this.paperScope.Path) {
-                    const path = this.paperPathToTwoPath(child, targetGroup, styleSource);
-                    if (!primaryShape) primaryShape = path;
-                }
-            });
-            return primaryShape;
-        } else if (paperItem instanceof this.paperScope.Path) {
-            return this.paperPathToTwoPath(paperItem, targetGroup, styleSource);
-        }
-        return null;
     }
     
     updateSelectionHandles() {
@@ -687,7 +788,12 @@ class CanvasEngine {
         if (!this.activeLayerId) return false;
         const group = this.groups.get(this.activeLayerId);
         if (!group) return false;
-
+        
+        // Recursive hit test needed if we assume groups can contain groups
+        // But for editing paths, we usually only care about the immediate children of the Active Layer?
+        // Actually, if Active Layer is a group, we should look inside.
+        // For simplicity, we only hit test direct children for editing now.
+        
         for (let i = group.children.length - 1; i >= 0; i--) {
             const child = group.children[i];
             if (child instanceof Two.Path) {
@@ -732,7 +838,11 @@ class CanvasEngine {
             for (let i = group.children.length - 1; i >= 0; i--) {
                 const child = group.children[i]; if (!(child instanceof Two.Shape)) continue;
                 const bounds = child.getBoundingClientRect(true);
-                if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) { child.remove(); break; }
+                if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) { 
+                    child.remove(); 
+                    if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
+                    break; 
+                }
             }
         } else if (this.tool === 'select') {
             this.selectedShape = null;
@@ -814,6 +924,10 @@ class CanvasEngine {
              this.buildState.lassoPath!.vertices = []; // Reset Lasso visual
              this.buildState.lassoPoints = [];
              this.enterBuildMode(); // Re-enter to analyze new geometry for next action
+        }
+
+        if (this.isInteracting && this.activeLayerId) {
+            this.generateThumbnail(this.activeLayerId);
         }
 
         this.isInteracting = false; this.currentPath = null;
@@ -1013,6 +1127,7 @@ interface StageProps {
   onAnchorSelect?: (isSelected: boolean) => void;
   onSelectionTypeChange?: (type: SelectedObjectType) => void;
   onSelectionPropertiesChange?: (properties: Partial<ToolSettings>) => void;
+  onThumbnailReady?: (id: string, dataUrl: string) => void;
 }
 
 export interface StageHandle {
@@ -1034,6 +1149,7 @@ const Stage = forwardRef<StageHandle, StageProps>(({
     onAnchorSelect,
     onSelectionTypeChange,
     onSelectionPropertiesChange,
+    onThumbnailReady,
 }, ref) => {
   const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1052,7 +1168,7 @@ const Stage = forwardRef<StageHandle, StageProps>(({
   useEffect(() => { engineRef.current?.setActiveLayerId(activeLayerId); }, [activeLayerId]);
   useEffect(() => { engineRef.current?.setTool(activeTool); }, [activeTool]);
   useEffect(() => { engineRef.current?.setToolSettings(toolSettings); }, [toolSettings]);
-  useEffect(() => { engineRef.current?.setCallbacks({ onToolChange, onAnchorSelect, onSelectionTypeChange, onSelectionPropertiesChange }); }, [onToolChange, onAnchorSelect, onSelectionTypeChange, onSelectionPropertiesChange]);
+  useEffect(() => { engineRef.current?.setCallbacks({ onToolChange, onAnchorSelect, onSelectionTypeChange, onSelectionPropertiesChange, onThumbnailReady }); }, [onToolChange, onAnchorSelect, onSelectionTypeChange, onSelectionPropertiesChange, onThumbnailReady]);
 
   useImperativeHandle(ref, () => ({
       exportImage: (name, format) => {

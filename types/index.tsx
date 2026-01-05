@@ -23,8 +23,11 @@ export type BlendMode =
   | 'soft-light' | 'difference' | 'exclusion' | 'hue' 
   | 'saturation' | 'color' | 'luminosity' | 'destination-out';
 
+export type LayerType = 'layer' | 'group';
+
 export interface Layer {
     id: string;
+    type: LayerType;
     name: string;
     isVisible: boolean;
     opacity: number;
@@ -34,6 +37,10 @@ export interface Layer {
     y: number;
     scale: number;
     rotation: number;
+    // Grouping & UI
+    children: Layer[];
+    isOpen: boolean;
+    thumbnail?: string;
 }
 
 // --- Tooling ---

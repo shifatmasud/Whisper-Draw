@@ -1,5 +1,4 @@
 
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -61,7 +60,7 @@ const MetaPrototype = () => {
   const WINDOW_WIDTH = 320;
   const PROPERTIES_PANEL_HEIGHT = 500;
   const ASSETS_PANEL_HEIGHT = 300;
-  const LAYERS_PANEL_HEIGHT = 300;
+  const LAYERS_PANEL_HEIGHT = 400;
 
   const [windows, setWindows] = useState<Record<WindowId, WindowState>>({
     properties: { id: 'properties', title: 'Inspector', isOpen: true, zIndex: 3, x: -WINDOW_WIDTH / 2, y: -PROPERTIES_PANEL_HEIGHT / 2 },
@@ -89,25 +88,75 @@ const MetaPrototype = () => {
     });
   };
 
+  // --- Recursive Layer Helpers ---
+  const findLayer = (nodes: Layer[], id: string): Layer | null => {
+      for (const node of nodes) {
+          if (node.id === id) return node;
+          if (node.children) {
+              const found = findLayer(node.children, id);
+              if (found) return found;
+          }
+      }
+      return null;
+  };
+
+  const updateLayerInTree = (nodes: Layer[], id: string, updater: (l: Layer) => Layer): Layer[] => {
+      return nodes.map(node => {
+          if (node.id === id) return updater(node);
+          if (node.children) return { ...node, children: updateLayerInTree(node.children, id, updater) };
+          return node;
+      });
+  };
+
+  const deleteLayerFromTree = (nodes: Layer[], id: string): Layer[] => {
+      return nodes.filter(node => node.id !== id).map(node => ({
+          ...node,
+          children: deleteLayerFromTree(node.children, id)
+      }));
+  };
+  
+  const flattenLayerTree = (nodes: Layer[]): Layer[] => {
+      let flat: Layer[] = [];
+      nodes.forEach(node => {
+          flat.push(node);
+          if (node.children) flat = flat.concat(flattenLayerTree(node.children));
+      });
+      return flat;
+  };
+
   // --- Layer Management Callbacks ---
   const handleAddLayer = useCallback(() => {
     const newLayerId = `layer-${Date.now()}`;
+    const newLayer: Layer = {
+      id: newLayerId,
+      type: 'layer',
+      name: 'New Layer',
+      isVisible: true,
+      opacity: 1,
+      blendMode: 'source-over',
+      x: 0,
+      y: 0,
+      scale: 1,
+      rotation: 0,
+      children: [],
+      isOpen: true,
+    };
+
     setLayers(prevLayers => {
-      const newLayer: Layer = {
-        id: newLayerId,
-        name: `Layer ${prevLayers.length + 1}`,
-        isVisible: true,
-        opacity: 1,
-        blendMode: 'source-over',
-        x: 0,
-        y: 0,
-        scale: 1,
-        rotation: 0,
-      };
-      return [newLayer, ...prevLayers];
+        // If active layer is a group, add to it. Otherwise add to root (top of list).
+        if (activeLayerId) {
+             const active = findLayer(prevLayers, activeLayerId);
+             if (active && active.type === 'group') {
+                 return updateLayerInTree(prevLayers, activeLayerId, l => ({
+                     ...l,
+                     children: [newLayer, ...l.children]
+                 }));
+             }
+        }
+        return [newLayer, ...prevLayers];
     });
     setActiveLayerId(newLayerId);
-  }, []);
+  }, [activeLayerId]);
 
   useEffect(() => {
     if (layers.length === 0) {
@@ -121,7 +170,6 @@ const MetaPrototype = () => {
   
   const handleToolSettingChange = useCallback((key: keyof ToolSettings, value: any) => {
     setToolSettings(prev => {
-        // Intercept logic for stage actions triggered via settings
         if (key === 'penClosePath') {
             stageRef.current?.setPathClosed(value);
         }
@@ -133,84 +181,146 @@ const MetaPrototype = () => {
     setToolSettings(prev => ({ ...prev, ...properties }));
   }, []);
 
-  // Actions trigger from Properties Panel for Pen tool and Selection
   const handleStageAction = useCallback((action: string) => {
       if (!stageRef.current) return;
-      
       switch (action) {
-          case 'finishPath':
-              stageRef.current.finishPath();
-              setActiveTool('select');
-              break;
-          case 'deleteAnchor':
-              stageRef.current.deleteSelectedAnchor();
-              break;
-          case 'sharpAnchor':
-              stageRef.current.setAnchorSharp();
-              break;
-          case 'flatten':
-              stageRef.current.flattenSelectedShape();
-              break;
+          case 'finishPath': stageRef.current.finishPath(); setActiveTool('select'); break;
+          case 'deleteAnchor': stageRef.current.deleteSelectedAnchor(); break;
+          case 'sharpAnchor': stageRef.current.setAnchorSharp(); break;
+          case 'flatten': stageRef.current.flattenSelectedShape(); break;
       }
   }, []);
 
   const handleDeleteLayer = useCallback((id: string) => {
     setLayers(prevLayers => {
-      const newLayers = prevLayers.filter(l => l.id !== id);
-      setActiveLayerId(prevActiveId => {
-        if (prevActiveId === id) {
-          return newLayers.length > 0 ? newLayers[0].id : null;
-        }
-        return prevActiveId;
-      });
+      const newLayers = deleteLayerFromTree(prevLayers, id);
+      // If deleted active layer, fallback
+      if (activeLayerId === id) {
+          const flat = flattenLayerTree(newLayers);
+          if (flat.length > 0) setActiveLayerId(flat[0].id);
+          else setActiveLayerId(null);
+      }
       return newLayers;
     });
-  }, []);
+  }, [activeLayerId]);
 
   const handleDuplicateLayer = useCallback((id: string) => {
     const newLayerId = `layer-${Date.now()}`;
-    
-    // Command the canvas engine to duplicate the visual content first.
     stageRef.current?.duplicateLayerContent(id, newLayerId);
 
-    // Then, update the React state to reflect the new layer metadata.
     setLayers(prev => {
-      const layerIndex = prev.findIndex(l => l.id === id);
-      if (layerIndex === -1) return prev;
-      
-      const originalLayer = prev[layerIndex];
-      const newLayer: Layer = {
-        ...originalLayer, // Inherit properties
-        id: newLayerId,
-        name: `${originalLayer.name} Copy`,
+      const parentFinder = (nodes: Layer[]): { list: Layer[], index: number } | null => {
+           const idx = nodes.findIndex(n => n.id === id);
+           if (idx !== -1) return { list: nodes, index: idx };
+           for (const node of nodes) {
+               const res = parentFinder(node.children);
+               if (res) return res;
+           }
+           return null;
       };
 
-      const newLayers = [...prev];
-      // Place the new layer right above the original in the stack (and panel).
-      // This means inserting it at the same index, pushing the original down.
-      newLayers.splice(layerIndex, 0, newLayer);
+      // Need deep clone to avoid ref issues
+      const deepClone = JSON.parse(JSON.stringify(prev));
+      // But parentFinder needs to return reference to the array in the clone
+      // Simplified: Just use updateLayerInTree approach if we knew parent. 
+      // Since we don't track parentId, let's use a recursive insertion.
       
-      setActiveLayerId(newLayer.id);
+      const insertDuplicate = (nodes: Layer[]): Layer[] => {
+          const idx = nodes.findIndex(n => n.id === id);
+          if (idx !== -1) {
+              const original = nodes[idx];
+              const copy = { ...original, id: newLayerId, name: `${original.name} Copy` };
+              const newNodes = [...nodes];
+              newNodes.splice(idx, 0, copy);
+              return newNodes;
+          }
+          return nodes.map(n => ({ ...n, children: insertDuplicate(n.children) }));
+      };
+      
+      const newLayers = insertDuplicate(prev);
+      setActiveLayerId(newLayerId);
       return newLayers;
     });
   }, []);
 
   const handleUpdateLayerProperty = useCallback((id: string, properties: Partial<Layer>) => {
-    setLayers(prev => prev.map(l => l.id === id ? { ...l, ...properties } : l));
+    setLayers(prev => updateLayerInTree(prev, id, l => ({ ...l, ...properties })));
   }, []);
 
   const handleReorderLayers = useCallback((reorderedLayers: Layer[]) => {
-    setLayers(reorderedLayers);
+      // This only handles root level reordering if passed directly from LayersPanel
+      // The LayersPanel now manages recursion internally or passes specific update functions
+      // We'll update the whole tree state.
+      setLayers(reorderedLayers);
+  }, []);
+
+  // --- Grouping Logic ---
+  const handleGroupSelection = useCallback(() => {
+      if (!activeLayerId) return;
+      setLayers(prev => {
+          const layerToGroup = findLayer(prev, activeLayerId);
+          if (!layerToGroup) return prev;
+          if (layerToGroup.type === 'group') return prev; // Already a group? Or group the group? Let's assume group the item.
+
+          const newGroupId = `group-${Date.now()}`;
+          const newGroup: Layer = {
+              id: newGroupId,
+              type: 'group',
+              name: 'Group',
+              isVisible: true,
+              opacity: 1,
+              blendMode: 'source-over',
+              x: 0, y: 0, scale: 1, rotation: 0,
+              children: [layerToGroup],
+              isOpen: true
+          };
+
+          // Replace the layer with the group containing the layer
+          // We need to find the parent array of the layer
+          const replaceInTree = (nodes: Layer[]): Layer[] => {
+              const idx = nodes.findIndex(n => n.id === activeLayerId);
+              if (idx !== -1) {
+                  const newNodes = [...nodes];
+                  newNodes[idx] = newGroup;
+                  return newNodes;
+              }
+              return nodes.map(n => ({ ...n, children: replaceInTree(n.children) }));
+          };
+          
+          setActiveLayerId(newGroupId);
+          return replaceInTree(prev);
+      });
+  }, [activeLayerId]);
+  
+  const handleUngroup = useCallback((id: string) => {
+      setLayers(prev => {
+          const groupToUngroup = findLayer(prev, id);
+          if (!groupToUngroup || groupToUngroup.type !== 'group') return prev;
+          
+          const ungroupRecursive = (nodes: Layer[]): Layer[] => {
+              const idx = nodes.findIndex(n => n.id === id);
+              if (idx !== -1) {
+                  const newNodes = [...nodes];
+                  newNodes.splice(idx, 1, ...groupToUngroup.children);
+                  return newNodes;
+              }
+              return nodes.map(n => ({ ...n, children: ungroupRecursive(n.children) }));
+          };
+          
+          return ungroupRecursive(prev);
+      });
+  }, []);
+
+  const handleUpdateThumbnail = useCallback((id: string, dataUrl: string) => {
+      setLayers(prev => updateLayerInTree(prev, id, l => ({ ...l, thumbnail: dataUrl })));
   }, []);
 
   const handleExport = useCallback((fileName: string, format: 'png' | 'svg') => {
-      if (stageRef.current) {
-          stageRef.current.exportImage(fileName, format);
-      }
+      stageRef.current?.exportImage(fileName, format);
   }, []);
-
-  const reversedLayersForStage = useMemo(() => [...layers].reverse(), [layers]);
-  const activeLayer = useMemo(() => layers.find(l => l.id === activeLayerId) || null, [layers, activeLayerId]);
+  
+  // Recursive search for active layer prop
+  const activeLayer = useMemo(() => findLayer(layers, activeLayerId || ''), [layers, activeLayerId]);
   
   const handleContentDragStart = useCallback(() => setIsContentDragging(true), []);
   const handleContentDragEnd = useCallback(() => setIsContentDragging(false), []);
@@ -231,7 +341,7 @@ const MetaPrototype = () => {
 
       <Stage
         ref={stageRef}
-        layers={reversedLayersForStage}
+        layers={layers} // Pass tree directly
         activeLayerId={activeLayerId}
         activeTool={activeTool}
         toolSettings={toolSettings}
@@ -239,6 +349,7 @@ const MetaPrototype = () => {
         onAnchorSelect={setIsAnchorSelected}
         onSelectionTypeChange={setSelectedObjectType}
         onSelectionPropertiesChange={handleSelectionPropertiesChange}
+        onThumbnailReady={handleUpdateThumbnail}
       />
 
       <AnimatePresence>
@@ -281,6 +392,8 @@ const MetaPrototype = () => {
               onReorderLayers={handleReorderLayers}
               onContentDragStart={handleContentDragStart}
               onContentDragEnd={handleContentDragEnd}
+              onGroupSelection={handleGroupSelection}
+              onUngroup={handleUngroup}
             />
           </FloatingWindow>
         )}

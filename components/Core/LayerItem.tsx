@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -11,13 +12,16 @@ import ContextMenu from '../Package/ContextMenu.tsx';
 interface LayerItemProps {
     layer: Layer;
     isActive: boolean;
+    depth?: number;
     onSelect: (id: string) => void;
     onDelete: (id: string) => void;
     onDuplicate: (id: string) => void;
     onUpdateProperty: (id: string, properties: Partial<Layer>) => void;
     onDragStart: () => void;
     onDragEnd: () => void;
-    isReordering?: boolean;
+    onGroupSelection: () => void;
+    onUngroup: (id: string) => void;
+    children?: React.ReactNode;
 }
 
 const BLEND_MODES: { value: BlendMode, label: string }[] = [
@@ -29,22 +33,23 @@ const BLEND_MODES: { value: BlendMode, label: string }[] = [
   { value: 'lighten', label: 'Lighten' },
 ];
 
-const LayerItem: React.FC<LayerItemProps> = React.memo(({ layer, isActive, onSelect, onDelete, onDuplicate, onUpdateProperty, onDragStart, onDragEnd, isReordering = false }) => {
+const LayerItem: React.FC<LayerItemProps> = React.memo(({ 
+    layer, isActive, depth = 0, onSelect, onDelete, onDuplicate, 
+    onUpdateProperty, onDragStart, onDragEnd, onGroupSelection, onUngroup, children 
+}) => {
     const { theme } = useTheme();
     const dragControls = useDragControls();
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
-    const [isDraggingThisItem, setIsDraggingThisItem] = useState(false);
-
-    const isOtherItemDragging = isReordering && !isDraggingThisItem;
+    const [isDragging, setIsDragging] = useState(false);
 
     const handleDragStartInternal = () => {
-        setIsDraggingThisItem(true);
+        setIsDragging(true);
         onDragStart();
     };
     
     const handleDragEndInternal = () => {
-        setIsDraggingThisItem(false);
+        setIsDragging(false);
         onDragEnd();
     };
 
@@ -60,9 +65,8 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({ layer, isActive, onSel
         position: 'relative',
         cursor: 'pointer',
         userSelect: 'none',
-        transition: `background-color ${theme.time['Time.1x']} ease, border-color ${theme.time['Time.1x']} ease, opacity 0.2s ease`,
-        opacity: isOtherItemDragging ? 0.4 : 1,
-        pointerEvents: isOtherItemDragging ? 'none' : 'auto',
+        marginLeft: `${depth * 16}px`, // Indentation for tree
+        transition: `background-color ${theme.time['Time.1x']} ease, border-color ${theme.time['Time.1x']} ease`,
     };
     
     const handleMenuOpen = (e: React.MouseEvent) => {
@@ -72,18 +76,20 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({ layer, isActive, onSel
     };
     
     const menuItems = [
-      {
+      ...(layer.type === 'layer' ? [{
         label: 'Blending Mode',
         subItems: BLEND_MODES.map(mode => ({
           label: mode.label,
           onClick: () => onUpdateProperty(layer.id, { blendMode: mode.value }),
           isSelected: layer.blendMode === mode.value,
         }))
-      },
+      }] : []),
       { type: 'separator' as const },
-      { label: 'Duplicate Layer', icon: 'ph-copy', onClick: () => onDuplicate(layer.id) },
+      ...(layer.type === 'group' ? [{ label: 'Ungroup', icon: 'ph-folder-minus', onClick: () => onUngroup(layer.id) }] : []),
+      { label: 'Group Selection', icon: 'ph-folder-plus', onClick: onGroupSelection },
       { type: 'separator' as const },
-      { label: 'Delete Layer', icon: 'ph-trash', onClick: () => onDelete(layer.id), isDestructive: true },
+      { label: 'Duplicate', icon: 'ph-copy', onClick: () => onDuplicate(layer.id) },
+      { label: 'Delete', icon: 'ph-trash', onClick: () => onDelete(layer.id), isDestructive: true },
     ];
 
     const iconStyle: React.CSSProperties = {
@@ -94,7 +100,20 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({ layer, isActive, onSel
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        transition: `background-color ${theme.time['Time.1x']} ease`,
+        flexShrink: 0,
+        cursor: 'pointer',
+    };
+
+    const thumbnailStyle: React.CSSProperties = {
+        width: '32px',
+        height: '32px',
+        borderRadius: '4px',
+        backgroundColor: theme.Color.Base.Surface[1],
+        backgroundImage: layer.thumbnail ? `url(${layer.thumbnail})` : 'none',
+        backgroundSize: 'contain',
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: 'center',
+        border: `1px solid ${theme.Color.Base.Surface[3]}`,
         flexShrink: 0,
     };
 
@@ -117,7 +136,7 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({ layer, isActive, onSel
                         e.stopPropagation();
                         dragControls.start(e);
                     }}
-                    style={{ ...iconStyle, cursor: isOtherItemDragging ? 'default' : 'grab', touchAction: 'none' }}
+                    style={{ ...iconStyle, cursor: 'grab', touchAction: 'none' }}
                 >
                     <i className="ph-bold ph-dots-six-vertical" />
                 </div>
@@ -128,10 +147,26 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({ layer, isActive, onSel
                         e.stopPropagation();
                         onUpdateProperty(layer.id, { isVisible: !layer.isVisible });
                     }}
-                    style={{ ...iconStyle, cursor: 'pointer' }}
+                    style={{ ...iconStyle }}
                 >
                     <i className={`ph-bold ${layer.isVisible ? 'ph-eye' : 'ph-eye-slash'}`} />
                 </div>
+                
+                {/* Group Chevron */}
+                {layer.type === 'group' && (
+                     <div 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onUpdateProperty(layer.id, { isOpen: !layer.isOpen });
+                        }}
+                        style={{ ...iconStyle, transform: layer.isOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                    >
+                        <i className="ph-bold ph-caret-right" />
+                    </div>
+                )}
+
+                {/* Thumbnail */}
+                <div style={thumbnailStyle} />
 
                 {/* Layer Name */}
                 <span style={{ 
@@ -146,13 +181,14 @@ const LayerItem: React.FC<LayerItemProps> = React.memo(({ layer, isActive, onSel
                 </span>
 
                 {/* Context Menu Trigger */}
-                <div
-                    onClick={handleMenuOpen}
-                    style={{ ...iconStyle, cursor: 'pointer' }}
-                >
+                <div onClick={handleMenuOpen} style={iconStyle}>
                     <i className="ph-bold ph-dots-three-vertical" />
                 </div>
             </div>
+            
+            {/* Render Children (Recursive List) */}
+            {children}
+            
             {isMenuOpen && <ContextMenu items={menuItems} position={menuPosition} onClose={() => setIsMenuOpen(false)} />}
         </Reorder.Item>
     );
