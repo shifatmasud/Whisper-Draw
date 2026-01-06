@@ -78,6 +78,11 @@ export interface ToolSettings {
     starPoints: number;
     starInnerRadius: number; // 0 to 1
     polygonSides: number;
+    // Properties of the selected object. Optional.
+    selectionX?: number;
+    selectionY?: number;
+    selectionRotation?: number;
+    selectionScale?: number;
 }
 
 // --- Engine Events ---

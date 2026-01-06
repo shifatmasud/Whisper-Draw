@@ -141,6 +141,33 @@ class CanvasEngine {
         // Apply settings to selection (standard logic)
         if (this.selectedShape) {
             this.applySettingsToShape(this.selectedShape);
+
+            // Apply transform updates from settings
+            let transformChanged = false;
+            if (settings.selectionX !== undefined && this.selectedShape.translation.x !== settings.selectionX) {
+                this.selectedShape.translation.x = settings.selectionX;
+                transformChanged = true;
+            }
+            if (settings.selectionY !== undefined && this.selectedShape.translation.y !== settings.selectionY) {
+                this.selectedShape.translation.y = settings.selectionY;
+                transformChanged = true;
+            }
+            if (settings.selectionRotation !== undefined) {
+                const newRotationRad = (settings.selectionRotation * Math.PI) / 180;
+                // Use a small epsilon for float comparison to avoid unnecessary updates
+                if (Math.abs(this.selectedShape.rotation - newRotationRad) > 0.0001) {
+                    this.selectedShape.rotation = newRotationRad;
+                    transformChanged = true;
+                }
+            }
+            if (settings.selectionScale !== undefined && this.selectedShape.scale !== settings.selectionScale) {
+                this.selectedShape.scale = settings.selectionScale;
+                transformChanged = true;
+            }
+
+            if (transformChanged) {
+                this.updateSelectionHandles();
+            }
         }
 
         // Real-time update for pen path
@@ -659,7 +686,7 @@ class CanvasEngine {
         
         path.translation.copy(shape.translation);
         path.rotation = shape.rotation;
-        path.scale = shape.scale;
+        path.scale = typeof shape.scale === 'object' ? new Two.Vector(shape.scale.x, shape.scale.y) : shape.scale;
         path.fill = shape.fill;
         path.stroke = shape.stroke;
         path.linewidth = shape.linewidth;
@@ -901,6 +928,11 @@ class CanvasEngine {
                         strokeEnabled: !strokeIsTransparent, strokeColor: strokeIsTransparent ? this.settings.strokeColor : strokeColorStr,
                         fillEnabled: !fillIsTransparent, fillColor: fillIsTransparent ? this.settings.fillColor : fillColorStr,
                         strokeWidth: shape.linewidth, lineCap: 'cap' in shape ? shape.cap : this.settings.lineCap, lineJoin: 'join' in shape ? shape.join : this.settings.lineJoin,
+                        // Add transform properties
+                        selectionX: shape.translation.x,
+                        selectionY: shape.translation.y,
+                        selectionRotation: (shape.rotation * 180) / Math.PI,
+                        selectionScale: typeof shape.scale === 'number' ? shape.scale : shape.scale.x, // Assuming uniform scale
                     };
 
                     if ((shape as any)._isRoundedRect) { propsToUpdate.cornerRadius = (shape as any)._cornerRadius; }
@@ -941,6 +973,12 @@ class CanvasEngine {
         if (this.tool === 'select' && this.selectedShape && this.isInteracting) {
             this.selectedShape.translation.set(local.x - this.dragOffset.x, local.y - this.dragOffset.y);
             this.updateSelectionHandles();
+            if (this.onSelectionPropertiesChange) {
+                this.onSelectionPropertiesChange({
+                    selectionX: this.selectedShape.translation.x,
+                    selectionY: this.selectedShape.translation.y,
+                });
+            }
         } else if (this.tool === 'brush') {
             if (this.isInteracting && this.currentPath) this.currentPath.vertices.push(new Two.Anchor(local.x, local.y));
         } else if (this.tool === 'pen') { this.handlePenMove(local.x, local.y);

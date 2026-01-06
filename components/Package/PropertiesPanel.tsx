@@ -40,14 +40,21 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState<Tab>('tool');
   
+  // Tool Motion Values
   const strokeWidthValue = useMotionValue(toolSettings.strokeWidth);
-  const opacityValue = useMotionValue(activeLayer ? activeLayer.opacity * 100 : 100);
-  const scaleValue = useMotionValue(activeLayer ? activeLayer.scale : 1);
-  const rotationValue = useMotionValue(activeLayer ? activeLayer.rotation : 0);
   const cornerRadiusValue = useMotionValue(toolSettings.cornerRadius);
   const starPointsValue = useMotionValue(toolSettings.starPoints);
   const starInnerRadiusValue = useMotionValue(toolSettings.starInnerRadius * 100);
   const polygonSidesValue = useMotionValue(toolSettings.polygonSides);
+  
+  // Selection Transform Motion Values
+  const selectionScaleValue = useMotionValue(toolSettings.selectionScale ?? 1);
+  const selectionRotationValue = useMotionValue(toolSettings.selectionRotation ?? 0);
+  
+  // Layer Motion Values
+  const opacityValue = useMotionValue(activeLayer ? activeLayer.opacity * 100 : 100);
+  const scaleValue = useMotionValue(activeLayer ? activeLayer.scale : 1);
+  const rotationValue = useMotionValue(activeLayer ? activeLayer.rotation : 0);
 
   useEffect(() => {
     strokeWidthValue.set(toolSettings.strokeWidth);
@@ -55,7 +62,9 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     starPointsValue.set(toolSettings.starPoints);
     starInnerRadiusValue.set(toolSettings.starInnerRadius * 100);
     polygonSidesValue.set(toolSettings.polygonSides);
-  }, [ toolSettings, strokeWidthValue, cornerRadiusValue, starPointsValue, starInnerRadiusValue, polygonSidesValue ]);
+    if (toolSettings.selectionScale !== undefined) selectionScaleValue.set(toolSettings.selectionScale);
+    if (toolSettings.selectionRotation !== undefined) selectionRotationValue.set(toolSettings.selectionRotation);
+  }, [ toolSettings, strokeWidthValue, cornerRadiusValue, starPointsValue, starInnerRadiusValue, polygonSidesValue, selectionScaleValue, selectionRotationValue ]);
 
   useEffect(() => {
     if (activeLayer) {
@@ -103,23 +112,35 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                     <div style={groupStyle}>
                         <Select label="Selection Mode" value={toolSettings.selectionMode} onChange={(e) => onSettingChange('selectionMode', e.target.value)} options={[{ value: 'vector', label: 'Vector (Deep Select)' }, { value: 'layer', label: 'Layer (Group Select)' }]} />
                     </div>
-                    {isPrimitiveSelected && (
-                        <div style={groupStyle}>
-                            <label style={{...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2]}}>PROPERTIES</label>
-                            {selectedObjectType === 'rectangle' && <RangeSlider label="Corner Radius" motionValue={cornerRadiusValue} onChange={(v) => onSettingChange('cornerRadius', v)} onCommit={(v) => onSettingChange('cornerRadius', v)} min={0} max={100} />}
-                            {selectedObjectType === 'star' && (<>
-                                <RangeSlider label="Points" motionValue={starPointsValue} onChange={(v) => onSettingChange('starPoints', v)} onCommit={(v) => onSettingChange('starPoints', v)} min={3} max={20} step={1}/>
-                                <RangeSlider label="Inner Radius %" motionValue={starInnerRadiusValue} onChange={(v) => onSettingChange('starInnerRadius', v / 100)} onCommit={(v) => onSettingChange('starInnerRadius', v / 100)} min={10} max={90} />
-                            </>)}
-                            {selectedObjectType === 'polygon' && <RangeSlider label="Sides" motionValue={polygonSidesValue} onChange={(v) => onSettingChange('polygonSides', v)} onCommit={(v) => onSettingChange('polygonSides', v)} min={3} max={12} step={1}/>}
-                        </div>
-                    )}
                     {selectedObjectType && (
-                        <div style={groupStyle}>
-                            <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>SELECTION ACTIONS</label>
-                            {isPrimitiveSelected ? (<Button label="Convert to Path" variant="secondary" size="M" icon="ph-bezier-curve" onClick={() => onPenAction && onPenAction('flatten')} />) 
-                            : (<div style={{...theme.Type.Readable.Body.S, color: theme.Color.Success.Content[1], display: 'flex', alignItems: 'center', gap: '6px'}}><i className="ph-bold ph-check-circle" />Editable Path</div>)}
-                        </div>
+                        <>
+                            <div style={groupStyle}>
+                                <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>TRANSFORM</label>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.spacing['Space.S'] }}>
+                                    <Input label="X" type="number" value={(toolSettings.selectionX ?? 0).toFixed(1)} onChange={(e) => onSettingChange('selectionX', Number(e.target.value))} />
+                                    <Input label="Y" type="number" value={(toolSettings.selectionY ?? 0).toFixed(1)} onChange={(e) => onSettingChange('selectionY', Number(e.target.value))} />
+                                </div>
+                                <RangeSlider label="Scale" motionValue={selectionScaleValue} min={0.1} max={5} step={0.01} onChange={(v) => onSettingChange('selectionScale', v)} onCommit={(v) => onSettingChange('selectionScale', v)} />
+                                <RangeSlider label="Rotation" motionValue={selectionRotationValue} min={0} max={360} step={1} onChange={(v) => onSettingChange('selectionRotation', v)} onCommit={(v) => onSettingChange('selectionRotation', v)} />
+                            </div>
+
+                            {isPrimitiveSelected &&
+                            <div style={groupStyle}>
+                                <label style={{...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2]}}>PROPERTIES</label>
+                                {selectedObjectType === 'rectangle' && <RangeSlider label="Corner Radius" motionValue={cornerRadiusValue} onChange={(v) => onSettingChange('cornerRadius', v)} onCommit={(v) => onSettingChange('cornerRadius', v)} min={0} max={100} />}
+                                {selectedObjectType === 'star' && (<>
+                                    <RangeSlider label="Points" motionValue={starPointsValue} onChange={(v) => onSettingChange('starPoints', v)} onCommit={(v) => onSettingChange('starPoints', v)} min={3} max={20} step={1}/>
+                                    <RangeSlider label="Inner Radius %" motionValue={starInnerRadiusValue} onChange={(v) => onSettingChange('starInnerRadius', v / 100)} onCommit={(v) => onSettingChange('starInnerRadius', v / 100)} min={10} max={90} />
+                                </>)}
+                                {selectedObjectType === 'polygon' && <RangeSlider label="Sides" motionValue={polygonSidesValue} onChange={(v) => onSettingChange('polygonSides', v)} onCommit={(v) => onSettingChange('polygonSides', v)} min={3} max={12} step={1}/>}
+                            </div>
+                            }
+                            <div style={groupStyle}>
+                                <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>SELECTION ACTIONS</label>
+                                {isPrimitiveSelected ? (<Button label="Convert to Path" variant="secondary" size="M" icon="ph-bezier-curve" onClick={() => onPenAction && onPenAction('flatten')} />) 
+                                : (<div style={{...theme.Type.Readable.Body.S, color: theme.Color.Success.Content[1], display: 'flex', alignItems: 'center', gap: '6px'}}><i className="ph-bold ph-check-circle" />Editable Path</div>)}
+                            </div>
+                        </>
                     )}
                   </>
               )}
