@@ -76,6 +76,9 @@ class CanvasEngine {
             height: container.clientHeight,
             autostart: true,
         }).appendTo(container);
+        
+        // Center the scene origin
+        this.two.scene.translation.set(this.two.width / 2, this.two.height / 2);
 
         // Thumbnail Generator Instance (Hidden)
         const thumbCanvas = document.createElement('canvas');
@@ -336,6 +339,8 @@ class CanvasEngine {
         this.two.width = width;
         this.two.height = height;
         this.two.renderer.setSize(width, height);
+        // Keep scene centered on resize
+        this.two.scene.translation.set(width / 2, height / 2);
     }
     
     public finishPath() {
@@ -866,7 +871,11 @@ class CanvasEngine {
         return false;
     }
 
-    handleDown(x: number, y: number) {
+    handleDown(rawX: number, rawY: number) {
+        // Convert screen coordinates to scene coordinates (Center Origin)
+        const x = rawX - this.two.width / 2;
+        const y = rawY - this.two.height / 2;
+        
         const now = Date.now();
         if (now - this.lastClickTime < 300) {
             if (this.tool === 'pen') { this.finishPath(); this.lastClickTime = 0; return; }
@@ -958,7 +967,11 @@ class CanvasEngine {
         } else if (this.tool === 'shape') { this.handleShapeDown(local.x, local.y, group, x, y); }
     }
 
-    handleMove(x: number, y: number) {
+    handleMove(rawX: number, rawY: number) {
+        // Convert screen coordinates to scene coordinates (Center Origin)
+        const x = rawX - this.two.width / 2;
+        const y = rawY - this.two.height / 2;
+        
         if (!this.activeLayerId) return;
         const group = this.groups.get(this.activeLayerId);
         if (!group) return;
@@ -1107,16 +1120,7 @@ class CanvasEngine {
                     this.updateAnchorSelection(i); this.penInteraction = { mode: 'dragging-anchor', dragStart: {x: local.x, y: local.y}, initialPos: {x: v.x, y: v.y} }; this.updatePenHelpers(); return;
                 }
             }
-        }
-        for (let i = group.children.length - 1; i >= 0; i--) {
-            const child = group.children[i]; if (!(child instanceof Two.Path)) continue;
-            const local = this.toLocal(child, x, y);
-            for (let j = 0; j < child.vertices.length; j++) {
-                const v = child.vertices[j]; if (Math.hypot(local.x - v.x, local.y - v.y) < HIT_RADIUS) {
-                    this.penPath = child; this.updateAnchorSelection(j); this.penInteraction = { mode: 'dragging-anchor', dragStart: {x: local.x, y: local.y}, initialPos: {x: v.x, y: v.y} }; this.updatePenHelpers(); return;
-                }
-            }
-            const vertices = child.vertices; const count = child.closed ? vertices.length : vertices.length - 1;
+            const vertices = this.penPath.vertices; const count = this.penPath.closed ? vertices.length : vertices.length - 1;
             for (let j = 0; j < count; j++) {
                 const v1 = vertices[j], v2 = vertices[(j + 1) % vertices.length];
                 for (let k = 0; k <= 20; k++) {
@@ -1127,7 +1131,7 @@ class CanvasEngine {
                     const d = lerpV(a, b, t), e = lerpV(b, c, t);
                     const pos = lerpV(d, e, t);
                     if (Math.hypot(local.x - pos.x, local.y - pos.y) < HIT_RADIUS) {
-                        this.penPath = child; const { newAnchor, newV1Right, newV2Left } = this.splitBezier(v1, v2, t);
+                        const { newAnchor, newV1Right, newV2Left } = this.splitBezier(v1, v2, t);
                         v1.controls.right.copy(newV1Right); v2.controls.left.copy(newV2Left);
                         this.penPath.vertices.splice(j + 1, 0, newAnchor); this.updateAnchorSelection(j + 1);
                         this.penInteraction = { mode: 'dragging-anchor', dragStart: {x: local.x, y: local.y}, initialPos: {x: newAnchor.x, y: newAnchor.y} }; this.updatePenHelpers(); return;
@@ -1210,7 +1214,7 @@ export interface StageHandle {
 
 const Stage = forwardRef<StageHandle, StageProps>(({ 
     layers, 
-    activeLayerId,
+    activeLayerId, 
     activeTool,
     toolSettings,
     onToolChange,
@@ -1246,6 +1250,7 @@ const Stage = forwardRef<StageHandle, StageProps>(({
           } else if (format === 'svg') {
               const tempDiv = document.createElement('div');
               const svgTwo = new Two({ type: Two.Types.svg, width: engine.two.width, height: engine.two.height }).appendTo(tempDiv);
+              svgTwo.scene.translation.copy(engine.two.scene.translation); // Match centering
               engine.groups.forEach((group) => { svgTwo.add((group as any).clone()); });
               svgTwo.update();
               const svgElem = tempDiv.querySelector('svg');
