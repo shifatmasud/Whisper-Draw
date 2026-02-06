@@ -49,17 +49,23 @@ const Stage = forwardRef<StageHandle, StageProps>(({
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const engine = new CanvasEngine(containerRef.current);
+    const container = containerRef.current;
+    const engine = new CanvasEngine(container);
     engineRef.current = engine;
     
-    const handleResize = () => { 
-        if (containerRef.current) engine.resize(containerRef.current.clientWidth, containerRef.current.clientHeight); 
-    };
-    
-    window.addEventListener('resize', handleResize);
-    return () => { 
-        window.removeEventListener('resize', handleResize); 
-        engine.destroy(); 
+    // Use ResizeObserver for robust canvas resizing. This ensures the canvas
+    // perfectly matches its container's dimensions, even with responsive CSS.
+    const resizeObserver = new ResizeObserver(entries => {
+      if (!entries || entries.length === 0) return;
+      const { width, height } = entries[0].contentRect;
+      engine.resize(width, height);
+    });
+
+    resizeObserver.observe(container);
+
+    return () => {
+        resizeObserver.disconnect();
+        engine.destroy();
     };
   }, []);
 
