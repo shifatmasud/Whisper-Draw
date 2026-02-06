@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -101,14 +100,18 @@ export interface SelectionState {
   type: 'path' | 'group' | 'none';
 }
 
-// FIX: Add LogEntry type for console logs
+export interface Ripple {
+  id: number;
+  x: number;
+  y: number;
+}
+
 export interface LogEntry {
   id: number;
   timestamp: string;
   message: string;
 }
 
-// FIX: Add Button types for props and centralize them
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'outline';
 export type ButtonSize = 'S' | 'M' | 'L';
 

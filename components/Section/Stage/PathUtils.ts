@@ -1,9 +1,9 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import Two from 'two.js';
+// FIX: Changed import to a namespace import to fix type resolution issues.
+import * as Two from 'two.js';
 import paper from 'paper';
 
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -16,7 +16,6 @@ export const lerpV = (v1: { x: number; y: number }, v2: { x: number; y: number }
 /**
  * Splits a Cubic Bezier curve at time t.
  */
-// FIX: Use any for Two types to avoid 'Two only refers to a type' error
 export const splitBezier = (v1: any, v2: any, t: number) => {
   const p0 = { x: v1.x, y: v1.y };
   const p1 = { x: v1.x + v1.controls.right.x, y: v1.y + v1.controls.right.y };
@@ -27,7 +26,6 @@ export const splitBezier = (v1: any, v2: any, t: number) => {
   const l2 = lerpV(l1, h1, t), h1_new = lerpV(h1, h2, t);
   const split = lerpV(l2, h1_new, t);
 
-  // FIX: Cast Two to any to access Anchor constructor as a value
   const newAnchor = new (Two as any).Anchor(
     split.x, split.y,
     l2.x - split.x, l2.y - split.y,
@@ -44,8 +42,7 @@ export const splitBezier = (v1: any, v2: any, t: number) => {
 /**
  * Converts Two.js matrix to Paper.js matrix.
  */
-// FIX: Use any for Two.Matrix to avoid type resolution issues
-export const twoMatrixToPaperMatrix = (twoMatrix: any, paperScope: paper.PaperScope): paper.Matrix => {
+export const twoMatrixToPaperMatrix = (twoMatrix: Two.Matrix, paperScope: paper.PaperScope): paper.Matrix => {
   const m = twoMatrix.elements;
   return new paperScope.Matrix(m[0], m[3], m[1], m[4], m[6], m[7]);
 };
@@ -55,11 +52,9 @@ export const twoMatrixToPaperMatrix = (twoMatrix: any, paperScope: paper.PaperSc
  * or applying styling recursively.
  */
 export const normalizeImportedContent = (item: any) => {
-  // FIX: Cast Two to any for instanceof check and property access
   if (item instanceof (Two as any).Group) {
     item.children.forEach((child: any) => normalizeImportedContent(child));
   } else if (item instanceof (Two as any).Shape) {
-    // FIX: Cast to any to access fill and stroke which might not be on the base Shape type
     const shape = item as any;
     if (shape.fill === undefined || shape.fill === 'none') shape.fill = 'black';
     if (shape.stroke === undefined) shape.stroke = 'transparent';

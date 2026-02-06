@@ -6,9 +6,9 @@ import React, { useState } from 'react';
 import { useTheme } from '../../Theme.tsx';
 import { motion, type MotionValue, useTransform, useMotionValue } from 'framer-motion';
 import StateLayer from './StateLayer.tsx';
-import RippleLayer, { Ripple } from './RippleLayer.tsx';
+import RippleLayer from './RippleLayer.tsx';
 // FIX: Import button types from centralized types file.
-import { ButtonVariant, ButtonSize } from '../../types/index.tsx';
+import { ButtonVariant, ButtonSize, Ripple } from '../../types/index.tsx';
 
 interface ButtonProps {
   variant?: ButtonVariant;

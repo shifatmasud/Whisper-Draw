@@ -66,9 +66,9 @@ const MetaPrototype = () => {
 
   const [windows, setWindows] = useState<Record<WindowId, WindowState>>({
     properties: { id: 'properties', title: 'Inspector', isOpen: true, zIndex: 3, x: -WINDOW_WIDTH / 2, y: -PROPERTIES_PANEL_HEIGHT / 2 },
-    layers: { id: 'layers', title: 'Layers', isOpen: true, zIndex: 2, x: -WINDOW_WIDTH / 2, y: -LAYERS_PANEL_HEIGHT / 2 },
+    layers: { id: 'layers', title: 'Layers', isOpen: true, zIndex: 2, x: -WINDOW_WIDTH / 2 - 40, y: -LAYERS_PANEL_HEIGHT / 2 - 40 },
     assets: { id: 'assets', title: 'Assets', isOpen: false, zIndex: 1, x: -WINDOW_WIDTH / 2, y: -ASSETS_PANEL_HEIGHT / 2 },
-    aiAssistant: { id: 'aiAssistant', title: 'AI ASSISTANT', isOpen: true, zIndex: 4, x: window.innerWidth / 2 - WINDOW_WIDTH - 40, y: -AI_PANEL_HEIGHT / 2 },
+    aiAssistant: { id: 'aiAssistant', title: 'AI ASSISTANT', isOpen: true, zIndex: 4, x: -WINDOW_WIDTH / 2 + 40, y: -AI_PANEL_HEIGHT / 2 + 40 },
   });
 
   const bringToFront = (id: WindowId) => {
@@ -114,7 +114,7 @@ const MetaPrototype = () => {
   const deleteLayerFromTree = (nodes: Layer[], id: string): Layer[] => {
       return nodes.filter(node => node.id !== id).map(node => ({
           ...node,
-          children: deleteLayerFromTree(node.children, id)
+          children: deleteLayerFromTree(node.children || [], id)
       }));
   };
   
@@ -220,7 +220,7 @@ const MetaPrototype = () => {
               newNodes.splice(idx, 0, copy);
               return newNodes;
           }
-          return nodes.map(n => ({ ...n, children: insertDuplicate(n.children) }));
+          return nodes.map(n => ({ ...n, children: insertDuplicate(n.children || []) }));
       };
       
       const newLayers = insertDuplicate(prev);
@@ -264,7 +264,7 @@ const MetaPrototype = () => {
                   newNodes[idx] = newGroup;
                   return newNodes;
               }
-              return nodes.map(n => ({ ...n, children: replaceInTree(n.children) }));
+              return nodes.map(n => ({ ...n, children: replaceInTree(n.children || []) }));
           };
           
           setActiveLayerId(newGroupId);
@@ -284,7 +284,7 @@ const MetaPrototype = () => {
                   newNodes.splice(idx, 1, ...groupToUngroup.children);
                   return newNodes;
               }
-              return nodes.map(n => ({ ...n, children: ungroupRecursive(n.children) }));
+              return nodes.map(n => ({ ...n, children: ungroupRecursive(n.children || []) }));
           };
           
           return ungroupRecursive(prev);
@@ -301,8 +301,8 @@ const MetaPrototype = () => {
                 if (node.id === layerId) {
                     layerToMove = node;
                 } else {
-                    const newChildren = removeRecursive(node.children);
-                    if (newChildren.length !== node.children.length || newChildren !== node.children) {
+                    const newChildren = removeRecursive(node.children || []);
+                    if (newChildren.length !== (node.children || []).length || newChildren !== node.children) {
                          filtered.push({ ...node, children: newChildren });
                     } else {
                          filtered.push(node);
@@ -321,9 +321,9 @@ const MetaPrototype = () => {
             const addToGroupRecursive = (nodes: Layer[]): Layer[] => {
                 return nodes.map(node => {
                     if (node.id === targetGroupId && node.type === 'group') {
-                        return { ...node, children: [layerToMove!, ...node.children], isOpen: true };
+                        return { ...node, children: [layerToMove!, ...(node.children || [])], isOpen: true };
                     }
-                    if (node.children.length > 0) {
+                    if (node.children && node.children.length > 0) {
                          return { ...node, children: addToGroupRecursive(node.children) };
                     }
                     return node;

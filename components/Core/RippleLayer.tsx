@@ -4,12 +4,7 @@
  */
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-
-export interface Ripple {
-  id: number;
-  x: number;
-  y: number;
-}
+import { Ripple } from '../../types/index.tsx';
 
 interface RippleLayerProps {
   color: string;
