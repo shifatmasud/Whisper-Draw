@@ -244,30 +244,29 @@ export class CanvasEngine {
     const rootGroup = this.groups.get(this.activeLayerId);
     if (!rootGroup) return false;
 
-    const worldMousePoint = this.toLocal(this.two.scene, x, y);
-    const paperPoint = new this.paperScope.Point(worldMousePoint.x, worldMousePoint.y);
+    this.two.update();
 
-    let path: Two.Path | null = null;
-    
-    // Recursive search function
-    const findPathRecursive = (group: Two.Group): Two.Path | null => {
-        for (let i = group.children.length - 1; i >= 0; i--) {
-            const child = group.children[i];
-            if (child instanceof Two.Group) {
-                const found = findPathRecursive(child);
-                if (found) return found;
-            } else if (child instanceof Two.Path) {
-                const paperVersion = this.twoShapeToPaperPath(child);
-                if (paperVersion && (paperVersion as any).contains(paperPoint)) {
-                    return child;
+    const canvasRect = this.canvasRect;
+    const viewportX = x + canvasRect.left;
+    const viewportY = y + canvasRect.top;
+
+    const findPathAtPoint = (g: Two.Group, targetX: number, targetY: number): Two.Path | null => {
+        for (let i = g.children.length - 1; i >= 0; i--) {
+            const child = g.children[i];
+            if (child instanceof Two.Path) {
+                const bounds = child.getBoundingClientRect();
+                if (targetX >= bounds.left && targetX <= bounds.right && targetY >= bounds.top && targetY <= bounds.bottom) {
+                    return child as Two.Path;
                 }
+            } else if (child instanceof Two.Group) {
+                const found = findPathAtPoint(child as Two.Group, targetX, targetY);
+                if (found) return found;
             }
         }
         return null;
     };
 
-    path = findPathRecursive(rootGroup);
-
+    const path = findPathAtPoint(rootGroup, viewportX, viewportY);
     if (path) {
         this.penPath = path;
         this.selectedShape = null;
@@ -402,58 +401,40 @@ export class CanvasEngine {
   // --- INTERACTION LOGIC ---
 
   private handleDelete(group: Two.Group, x: number, y: number) {
-    const worldMousePoint = this.toLocal(this.two.scene, x, y);
-    const paperPoint = new this.paperScope.Point(worldMousePoint.x, worldMousePoint.y);
+    const canvasRect = this.canvasRect;
+    const viewportX = x + canvasRect.left;
+    const viewportY = y + canvasRect.top;
 
-    // Iterate backwards to correctly handle removal from array and hit-testing top-most items first
     for (let i = group.children.length - 1; i >= 0; i--) {
       const child = group.children[i];
-
-      const paperVersion = this.twoShapeToPaperPath(child);
-      if (paperVersion && (paperVersion as any).contains(paperPoint)) {
+      const bounds = child.getBoundingClientRect();
+      if (viewportX >= bounds.left && viewportX <= bounds.right && viewportY >= bounds.top && viewportY <= bounds.bottom) {
         child.remove();
         if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
-        
-        // If we deleted the selected shape, deselect it
-        if (this.selectedShape === child) {
-            this.selectedShape = null;
-            this.updateSelectionHandles();
-            this.onSelectionTypeChange?.(null);
-        }
-
-        break; // Found and deleted one, stop.
+        break;
       }
     }
   }
 
   private handleSelect(group: Two.Group, x: number, y: number) {
-    const worldMousePoint = this.toLocal(this.two.scene, x, y);
-    const paperPoint = new this.paperScope.Point(worldMousePoint.x, worldMousePoint.y);
-    
-    // Default to deselecting
-    let shapeToSelect = null;
+    this.selectedShape = null;
 
-    // Iterate backwards to hit-test top-most items first
+    const canvasRect = this.canvasRect;
+    const viewportX = x + canvasRect.left;
+    const viewportY = y + canvasRect.top;
+    
     for (let i = group.children.length - 1; i >= 0; i--) {
       const child = group.children[i];
-
-      const paperVersion = this.twoShapeToPaperPath(child);
-      if (paperVersion && (paperVersion as any).contains(paperPoint)) {
-        shapeToSelect = child;
-        break; // Found a shape, stop searching
+      const bounds = child.getBoundingClientRect();
+      if (viewportX >= bounds.left && viewportX <= bounds.right && viewportY >= bounds.top && viewportY <= bounds.bottom) {
+        this.selectShape(child);
+        const local = this.toLocal(child.parent, x, y);
+        this.dragOffset = { x: local.x - child.translation.x, y: local.y - child.translation.y };
+        return;
       }
     }
-
-    if (shapeToSelect) {
-      this.selectShape(shapeToSelect);
-      const local = this.toLocal(shapeToSelect.parent, x, y);
-      this.dragOffset = { x: local.x - shapeToSelect.translation.x, y: local.y - shapeToSelect.translation.y };
-    } else {
-      // Clicked on empty space
-      this.selectedShape = null;
-      this.onSelectionTypeChange?.(null);
-      this.updateSelectionHandles();
-    }
+    this.onSelectionTypeChange?.(null);
+    this.updateSelectionHandles();
   }
 
   private selectShape(shape: any) {
