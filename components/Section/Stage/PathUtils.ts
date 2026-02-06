@@ -2,8 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-// FIX: Changed import to a namespace import to fix type resolution issues.
-import * as Two from 'two.js';
+import Two from 'two.js';
 import paper from 'paper';
 
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -26,11 +25,11 @@ export const splitBezier = (v1: any, v2: any, t: number) => {
   const l2 = lerpV(l1, h1, t), h1_new = lerpV(h1, h2, t);
   const split = lerpV(l2, h1_new, t);
 
-  const newAnchor = new (Two as any).Anchor(
+  const newAnchor = new Two.Anchor(
     split.x, split.y,
     l2.x - split.x, l2.y - split.y,
     h1_new.x - split.x, h1_new.y - split.y,
-    (Two as any).Commands.curve
+    Two.Commands.curve
   );
 
   const newV1Right = { x: l1.x - p0.x, y: l1.y - p0.y };
@@ -42,7 +41,7 @@ export const splitBezier = (v1: any, v2: any, t: number) => {
 /**
  * Converts Two.js matrix to Paper.js matrix.
  */
-export const twoMatrixToPaperMatrix = (twoMatrix: Two.Matrix, paperScope: paper.PaperScope): paper.Matrix => {
+export const twoMatrixToPaperMatrix = (twoMatrix: any, paperScope: paper.PaperScope): paper.Matrix => {
   const m = twoMatrix.elements;
   return new paperScope.Matrix(m[0], m[3], m[1], m[4], m[6], m[7]);
 };
@@ -52,9 +51,9 @@ export const twoMatrixToPaperMatrix = (twoMatrix: Two.Matrix, paperScope: paper.
  * or applying styling recursively.
  */
 export const normalizeImportedContent = (item: any) => {
-  if (item instanceof (Two as any).Group) {
+  if (item instanceof Two.Group) {
     item.children.forEach((child: any) => normalizeImportedContent(child));
-  } else if (item instanceof (Two as any).Shape) {
+  } else if (item instanceof Two.Shape) {
     const shape = item as any;
     if (shape.fill === undefined || shape.fill === 'none') shape.fill = 'black';
     if (shape.stroke === undefined) shape.stroke = 'transparent';

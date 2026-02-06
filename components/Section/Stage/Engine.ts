@@ -2,8 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-// FIX: Changed import to a namespace import to fix type resolution issues.
-import * as Two from 'two.js';
+import Two from 'two.js';
 import paper from 'paper';
 import { Layer, Tool, ToolSettings, SelectedObjectType, ShapeType } from '../../../types/index.tsx';
 import { twoMatrixToPaperMatrix, normalizeImportedContent } from './PathUtils.ts';
@@ -56,8 +55,8 @@ export class CanvasEngine {
   lastClickTime: number = 0;
 
   constructor(container: HTMLElement) {
-    this.two = new (Two as any)({
-      type: (Two as any).Types.canvas,
+    this.two = new Two({
+      type: Two.Types.canvas,
       width: container.clientWidth,
       height: container.clientHeight,
       autostart: true,
@@ -66,8 +65,8 @@ export class CanvasEngine {
     this.two.scene.translation.set(this.two.width / 2, this.two.height / 2);
 
     const thumbCanvas = document.createElement('canvas');
-    this.thumbTwo = new (Two as any)({
-      type: (Two as any).Types.canvas,
+    this.thumbTwo = new Two({
+      type: Two.Types.canvas,
       width: 100,
       height: 100,
       domElement: thumbCanvas,
@@ -174,7 +173,7 @@ export class CanvasEngine {
         activeIds.add(layer.id);
         let group = this.groups.get(layer.id);
         if (!group) {
-          group = new (Two as any).Group();
+          group = new Two.Group();
           group.id = layer.id;
           this.groups.set(layer.id, group);
         }
@@ -203,7 +202,7 @@ export class CanvasEngine {
   // --- COORDINATE HELPERS ---
 
   private getGlobalMatrix(obj: any): Two.Matrix {
-    const matrix = new (Two as any).Matrix();
+    const matrix = new Two.Matrix();
     if (!obj || obj === this.two.scene) return matrix;
 
     const stack: any[] = [];
@@ -243,12 +242,12 @@ export class CanvasEngine {
     const findPathAtPoint = (g: Two.Group, targetX: number, targetY: number): Two.Path | null => {
         for (let i = g.children.length - 1; i >= 0; i--) {
             const child = g.children[i];
-            if (child instanceof (Two as any).Path) {
+            if (child instanceof Two.Path) {
                 const bounds = child.getBoundingClientRect(true);
                 if (targetX >= bounds.left && targetX <= bounds.right && targetY >= bounds.top && targetY <= bounds.bottom) {
                     return child as Two.Path;
                 }
-            } else if (child instanceof (Two as any).Group) {
+            } else if (child instanceof Two.Group) {
                 const found = findPathAtPoint(child as Two.Group, targetX, targetY);
                 if (found) return found;
             }
@@ -285,7 +284,7 @@ export class CanvasEngine {
       const bbox = clone.getBoundingClientRect();
       const bx = bbox.left + bbox.width / 2;
       const by = bbox.top + bbox.height / 2;
-      clone.translation.addSelf(new (Two as any).Vector((this.thumbTwo.width / 2) - bx, (this.thumbTwo.height / 2) - by));
+      clone.translation.addSelf(new Two.Vector((this.thumbTwo.width / 2) - bx, (this.thumbTwo.height / 2) - by));
     }
     this.thumbTwo.render();
     this.onThumbnailReady?.(layerId, this.thumbTwo.renderer.domElement.toDataURL('image/png', 0.5));
@@ -371,7 +370,7 @@ export class CanvasEngine {
       this.onSelectionPropertiesChange?.({ selectionX: this.selectedShape.translation.x, selectionY: this.selectedShape.translation.y });
     } else if (this.tool === 'brush' && this.currentPath) {
       const local = this.toLocal(this.currentPath.parent, x, y);
-      this.currentPath.vertices.push(new (Two as any).Anchor(local.x, local.y));
+      this.currentPath.vertices.push(new Two.Anchor(local.x, local.y));
     } else if (this.tool === 'pen') { 
       this.handlePenMove(x, y); 
     }
@@ -432,7 +431,7 @@ export class CanvasEngine {
   }
 
   private broadcastSelectionProperties(shape: any) {
-    let sample = shape instanceof (Two as any).Group && shape.children.length > 0 ? shape.children[0] : shape;
+    let sample = shape instanceof Two.Group && shape.children.length > 0 ? shape.children[0] : shape;
     const stroke = sample.stroke, fill = sample.fill;
     const props: Partial<ToolSettings> = {
       strokeEnabled: stroke !== 'transparent',
@@ -446,21 +445,21 @@ export class CanvasEngine {
       selectionScale: typeof shape.scale === 'number' ? shape.scale : (shape.scale.x || 1),
     };
     if (sample._isRoundedRect) props.cornerRadius = sample._cornerRadius;
-    if (sample instanceof (Two as any).Star) { props.starPoints = sample.sides; props.starInnerRadius = sample.outerRadius > 0 ? sample.innerRadius / sample.outerRadius : 0.5; }
-    if (sample instanceof (Two as any).Polygon) props.polygonSides = sample.sides;
+    if (sample instanceof Two.Star) { props.starPoints = sample.sides; props.starInnerRadius = sample.outerRadius > 0 ? sample.innerRadius / sample.outerRadius : 0.5; }
+    if (sample instanceof Two.Polygon) props.polygonSides = sample.sides;
     this.onSelectionPropertiesChange?.(props);
   }
 
   private broadcastSelectionType(shape: any) {
     let type: SelectedObjectType = null;
-    if (shape instanceof (Two as any).Group) type = 'group';
+    if (shape instanceof Two.Group) type = 'group';
     else if (shape._isRoundedRect) type = 'rectangle';
-    else if (shape instanceof (Two as any).Star) type = 'star';
-    else if (shape instanceof (Two as any).Polygon) type = 'polygon';
-    else if (shape instanceof (Two as any).Ellipse) type = 'ellipse';
-    else if (shape instanceof (Two as any).Line) type = 'line';
-    else if (shape instanceof (Two as any).Path) type = 'path';
-    else if (shape instanceof (Two as any).Rectangle) type = 'rectangle';
+    else if (shape instanceof Two.Star) type = 'star';
+    else if (shape instanceof Two.Polygon) type = 'polygon';
+    else if (shape instanceof Two.Ellipse) type = 'ellipse';
+    else if (shape instanceof Two.Line) type = 'line';
+    else if (shape instanceof Two.Path) type = 'path';
+    else if (shape instanceof Two.Rectangle) type = 'rectangle';
     this.onSelectionTypeChange?.(type);
   }
 
@@ -468,11 +467,11 @@ export class CanvasEngine {
     if (this.transformGroup) { this.two.remove(this.transformGroup); this.transformGroup = null; }
     if (!this.selectedShape || this.tool !== 'select') return;
     const bounds = this.selectedShape.getBoundingClientRect(true);
-    const group = new (Two as any).Group(); this.transformGroup = group;
-    const rect = new (Two as any).Rectangle(bounds.left + bounds.width/2, bounds.top + bounds.height/2, bounds.width + 10, bounds.height + 10);
+    const group = new Two.Group(); this.transformGroup = group;
+    const rect = new Two.Rectangle(bounds.left + bounds.width/2, bounds.top + bounds.height/2, bounds.width + 10, bounds.height + 10);
     rect.noFill(); rect.stroke = '#1565C0'; rect.linewidth = 2; group.add(rect);
     [{x: bounds.left-5, y: bounds.top-5}, {x: bounds.right+5, y: bounds.top-5}, {x: bounds.right+5, y: bounds.bottom+5}, {x: bounds.left-5, y: bounds.bottom+5}].forEach(p => {
-      const h = new (Two as any).Circle(p.x, p.y, 5); h.fill = '#FFFFFF'; h.stroke = '#1565C0'; h.linewidth = 1; group.add(h);
+      const h = new Two.Circle(p.x, p.y, 5); h.fill = '#FFFFFF'; h.stroke = '#1565C0'; h.linewidth = 1; group.add(h);
     });
     this.two.add(group);
   }
@@ -515,7 +514,7 @@ export class CanvasEngine {
   }
 
   public ungroupSelected() {
-    if (!this.selectedShape || !(this.selectedShape instanceof (Two as any).Group)) return;
+    if (!this.selectedShape || !(this.selectedShape instanceof Two.Group)) return;
 
     const group = this.selectedShape;
     const parent = group.parent;
@@ -573,18 +572,18 @@ export class CanvasEngine {
     }
     
     if (!this.penPath || this.penPath.closed) {
-      const path = new (Two as any).Path([], false, true, true);
+      const path = new Two.Path([], false, true, true);
       path.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : '#000'; 
       path.linewidth = this.settings.strokeWidth; 
       path.fill = this.settings.fillEnabled ? this.settings.fillColor : 'transparent';
       group.add(path); this.penPath = path;
       const local = this.toLocal(path, sceneX, sceneY);
-      path.vertices.push(new (Two as any).Anchor(local.x, local.y, 0,0,0,0, (Two as any).Commands.curve)); 
+      path.vertices.push(new Two.Anchor(local.x, local.y, 0,0,0,0, Two.Commands.curve)); 
       this.updateAnchorSelection(0);
       this.penInteraction = { mode: 'creating', dragStart: {x: local.x, y: local.y}, initialPos: {x: local.x, y: local.y} };
     } else {
       const local = this.toLocal(this.penPath, sceneX, sceneY);
-      this.penPath.vertices.push(new (Two as any).Anchor(local.x, local.y, 0,0,0,0, (Two as any).Commands.curve)); 
+      this.penPath.vertices.push(new Two.Anchor(local.x, local.y, 0,0,0,0, Two.Commands.curve)); 
       this.updateAnchorSelection(this.penPath.vertices.length - 1);
       this.penInteraction = { mode: 'creating', dragStart: {x: local.x, y: local.y}, initialPos: {x: local.x, y: local.y} };
     }
@@ -622,7 +621,7 @@ export class CanvasEngine {
     if (this.penHelpers) this.two.remove(this.penHelpers); 
     if (!this.penPath || this.tool !== 'pen') return;
     
-    const h = new (Two as any).Group(); 
+    const h = new Two.Group(); 
     this.penHelpers = h;
     
     const matrix = this.getGlobalMatrix(this.penPath);
@@ -630,17 +629,17 @@ export class CanvasEngine {
     
     this.penPath.vertices.forEach((v: any, i: number) => {
       const sel = i === this.selectedAnchorIdx;
-      const c = new (Two as any).Circle(v.x, v.y, sel ? 6 : 4); 
+      const c = new Two.Circle(v.x, v.y, sel ? 6 : 4); 
       c.fill = sel ? '#1565C0' : (i === 0 ? '#4CAF50' : '#FFFFFF'); 
       c.stroke = '#1565C0'; 
       h.add(c);
       
       if (sel && v.controls) {
         const lx = v.x + v.controls.left.x, ly = v.y + v.controls.left.y, rx = v.x + v.controls.right.x, ry = v.y + v.controls.right.y;
-        const lL = new (Two as any).Line(v.x, v.y, lx, ly), lR = new (Two as any).Line(v.x, v.y, rx, ry); 
+        const lL = new Two.Line(v.x, v.y, lx, ly), lR = new Two.Line(v.x, v.y, rx, ry); 
         lL.stroke = lR.stroke = '#1565C0'; 
         h.add(lL, lR);
-        const cL = new (Two as any).Circle(lx, ly, 4), cR = new (Two as any).Circle(rx, ry, 4); 
+        const cL = new Two.Circle(lx, ly, 4), cR = new Two.Circle(rx, ry, 4); 
         cL.fill = cR.fill = '#FFFFFF'; 
         cL.stroke = '#1565C0'; 
         h.add(cL, cR);
@@ -656,15 +655,15 @@ export class CanvasEngine {
     this.shapeOrigin = { x: localX, y: localY };
     let s: any;
     if (this.settings.shapeType === 'rectangle') { 
-      this.tempShape = new (Two as any).Group(); 
+      this.tempShape = new Two.Group(); 
       group.add(this.tempShape); 
       this.handleShapeMove(localX, localY, globalX, globalY); 
       return; 
     }
-    else if (this.settings.shapeType === 'ellipse') s = new (Two as any).Ellipse(localX, localY, 0, 0);
-    else if (this.settings.shapeType === 'star') s = new (Two as any).Star(localX, localY, 0, 0, this.settings.starPoints);
-    else if (this.settings.shapeType === 'polygon') s = new (Two as any).Polygon(localX, localY, 0, this.settings.polygonSides);
-    else if (this.settings.shapeType === 'line') s = new (Two as any).Line(localX, localY, localX, localY);
+    else if (this.settings.shapeType === 'ellipse') s = new Two.Ellipse(localX, localY, 0, 0);
+    else if (this.settings.shapeType === 'star') s = new Two.Star(localX, localY, 0, 0, this.settings.starPoints);
+    else if (this.settings.shapeType === 'polygon') s = new Two.Polygon(localX, localY, 0, this.settings.polygonSides);
+    else if (this.settings.shapeType === 'line') s = new Two.Line(localX, localY, localX, localY);
     
     if (s) { 
       s.fill = this.settings.fillEnabled ? this.settings.fillColor : 'transparent'; 
@@ -677,27 +676,27 @@ export class CanvasEngine {
 
   private handleShapeMove(localX: number, localY: number, globalX: number, globalY: number) {
     if (!this.tempShape || this.settings.shapeMode === 'build') return;
-    if (this.tempShape instanceof (Two as any).Line) { 
+    if (this.tempShape instanceof Two.Line) { 
       this.tempShape.vertices[1].x = localX; 
       this.tempShape.vertices[1].y = localY; 
       return; 
     }
     const w = Math.abs(localX - this.shapeOrigin.x), h = Math.abs(localY - this.shapeOrigin.y);
     const cx = (localX + this.shapeOrigin.x) / 2, cy = (localY + this.shapeOrigin.y) / 2;
-    if (this.tempShape instanceof (Two as any).Group) {
+    if (this.tempShape instanceof Two.Group) {
       this.tempShape.remove(this.tempShape.children);
       const r = this.two.makeRoundedRectangle(cx, cy, w, h, this.settings.cornerRadius);
       r.fill = this.settings.fillEnabled ? this.settings.fillColor : 'transparent'; r.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : 'transparent'; r.linewidth = this.settings.strokeWidth;
       (r as any)._isRoundedRect = true; (r as any)._cornerRadius = this.settings.cornerRadius; this.tempShape.add(r); return;
     }
     this.tempShape.translation.set(cx, cy); const rad = Math.hypot(w, h) / 2;
-    if (this.tempShape instanceof (Two as any).Ellipse) { this.tempShape.width = w; this.tempShape.height = h; }
-    else if (this.tempShape instanceof (Two as any).Star) { this.tempShape.outerRadius = rad; this.tempShape.innerRadius = rad * this.settings.starInnerRadius; }
-    else if (this.tempShape instanceof (Two as any).Polygon) (this.tempShape as any).radius = rad;
+    if (this.tempShape instanceof Two.Ellipse) { this.tempShape.width = w; this.tempShape.height = h; }
+    else if (this.tempShape instanceof Two.Star) { this.tempShape.outerRadius = rad; this.tempShape.innerRadius = rad * this.settings.starInnerRadius; }
+    else if (this.tempShape instanceof Two.Polygon) (this.tempShape as any).radius = rad;
   }
 
   private handleShapeUp() {
-    if (this.tempShape instanceof (Two as any).Group && this.activeLayerId) {
+    if (this.tempShape instanceof Two.Group && this.activeLayerId) {
       const r = this.tempShape.children[0];
       if (r) { 
         this.tempShape.remove(r); 
@@ -735,7 +734,7 @@ export class CanvasEngine {
         if ('cap' in o) o.cap = this.settings.lineCap;
         if ('join' in o) o.join = this.settings.lineJoin;
     };
-    if (s instanceof (Two as any).Group) s.children.forEach((c: any) => leaf(c)); 
+    if (s instanceof Two.Group) s.children.forEach((c: any) => leaf(c)); 
     else leaf(s);
   }
   
@@ -750,8 +749,8 @@ export class CanvasEngine {
     if (!twoShape) return null;
 
     // Use a temporary in-memory SVG renderer with Two.js
-    const tempTwo = new (Two as any)({
-      type: (Two as any).Types.svg,
+    const tempTwo = new Two({
+      type: Two.Types.svg,
       width: 1, height: 1 // Dimensions aren't critical
     });
 
@@ -812,7 +811,7 @@ export class CanvasEngine {
       const svgNode = tempDiv.querySelector('svg');
 
       if (!svgNode) {
-          return new (Two as any).Path([], false, false); // Return empty path on failure
+          return new Two.Path([], false, false); // Return empty path on failure
       }
 
       // Synchronously interpret the SVG node. This adds the result to the main scene.
@@ -830,7 +829,7 @@ export class CanvasEngine {
       
       // The result of interpretation is always a Two.Group.
       // If it contains just one path, we can simplify and return the path directly.
-      if (loadedShape.children.length === 1 && loadedShape.children[0] instanceof (Two as any).Path) {
+      if (loadedShape.children.length === 1 && loadedShape.children[0] instanceof Two.Path) {
           const child = loadedShape.children[0];
           // The child's matrix is local to the group. We need to apply the group's new local matrix to it.
           child.matrix.premultiply(loadedShape.matrix);
@@ -849,7 +848,7 @@ export class CanvasEngine {
     if (!group || group.children.length === 0) return;
     
     this.buildState.isActive = true;
-    this.buildState.container = new (Two as any).Group();
+    this.buildState.container = new Two.Group();
     this.two.add(this.buildState.container);
     
     this.buildState.originalShapes = [...group.children];
@@ -869,7 +868,7 @@ export class CanvasEngine {
         const twoShard = this.paperPathToTwoShape(item as paper.PathItem, this.buildState.container!);
         
         const applyShardStyle = (s: any) => {
-            if (s instanceof (Two as any).Group) {
+            if (s instanceof Two.Group) {
                 s.children.forEach(applyShardStyle);
             } else {
                 s.fill = '#007bff33';
@@ -883,7 +882,7 @@ export class CanvasEngine {
         return { two: twoShard, paper: item as paper.PathItem };
     });
     
-    this.buildState.lassoPath = new (Two as any).Path([], false, false, true);
+    this.buildState.lassoPath = new Two.Path([], false, false, true);
     this.buildState.lassoPath.fill = '#007bff22';
     this.buildState.lassoPath.stroke = '#007bff';
     this.buildState.lassoPath.linewidth = 1;
@@ -905,7 +904,7 @@ export class CanvasEngine {
   private updateBuildLasso(x: number, y: number) {
       if (!this.buildState.lassoPath) return;
       this.buildState.lassoPoints.push({x, y});
-      this.buildState.lassoPath.vertices.push(new (Two as any).Anchor(x, y));
+      this.buildState.lassoPath.vertices.push(new Two.Anchor(x, y));
   }
   
   private finalizeBuild() {
@@ -956,9 +955,9 @@ export class CanvasEngine {
       const twoShape = this.paperPathToTwoShape(shape, group);
 
       const applyFinalStyle = (s: any) => {
-          if (s instanceof (Two as any).Group) {
+          if (s instanceof Two.Group) {
               s.children.forEach(applyFinalStyle);
-          } else if (s instanceof (Two as any).Path) { // Check if it's a drawable shape
+          } else if (s instanceof Two.Path) { // Check if it's a drawable shape
               s.fill = this.settings.fillColor;
               s.stroke = this.settings.strokeColor;
               s.linewidth = this.settings.strokeWidth;
@@ -975,7 +974,7 @@ export class CanvasEngine {
 
 
   private handleBrushDown(x: number, y: number, group: Two.Group) {
-      const p = new (Two as any).Path([new (Two as any).Anchor(x, y)], false, true);
+      const p = new Two.Path([new Two.Anchor(x, y)], false, true);
       p.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : '#000';
       p.linewidth = this.settings.strokeWidth; p.fill = 'transparent';
       group.add(p); this.currentPath = p;
@@ -988,9 +987,9 @@ export class CanvasEngine {
       const parent = s.parent;
       if (!parent) return;
 
-      const isPrimitive = s instanceof (Two as any).Rectangle || s instanceof (Two as any).Ellipse || s instanceof (Two as any).Polygon || s instanceof (Two as any).Star || s instanceof (Two as any).Line || s._isRoundedRect;
+      const isPrimitive = s instanceof Two.Rectangle || s instanceof Two.Ellipse || s instanceof Two.Polygon || s instanceof Two.Star || s instanceof Two.Line || s._isRoundedRect;
       
-      if (s instanceof (Two as any).Path && !isPrimitive) {
+      if (s instanceof Two.Path && !isPrimitive) {
           return;
       }
 
@@ -1000,7 +999,7 @@ export class CanvasEngine {
         const isClosed = s.closed !== undefined ? s.closed : true;
         path = s.toPath(isClosed);
       } 
-      else if (s instanceof (Two as any).Path) {
+      else if (s instanceof Two.Path) {
         path = s.clone();
       } else {
         return;
