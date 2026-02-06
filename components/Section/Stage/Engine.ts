@@ -50,6 +50,7 @@ export class CanvasEngine {
   };
 
   lastClickTime: number = 0;
+  lastInteractedLayerId: string | null = null;
 
   constructor(container: HTMLElement) {
     this.two = new Two({
@@ -277,7 +278,7 @@ export class CanvasEngine {
     // We only want to edit raw paths
     if (hitObject && hitObject instanceof Two.Path) {
         this.penPath = hitObject as Two.Path;
-        this.selectedShape = null;
+        this.selectShape(null);
         if (this.transformGroup) { this.two.remove(this.transformGroup); this.transformGroup = null; }
         this.updateAnchorSelection(-1);
         this.setTool('pen');
@@ -342,10 +343,56 @@ export class CanvasEngine {
       }
     }
     this.lastClickTime = now;
+    this.lastInteractedLayerId = null; // Reset at the start of an interaction
 
+    // Tools that interact with existing objects (across all layers)
+    if (this.tool === 'select' || this.tool === 'delete') {
+        this.two.update();
+        let hitObject: any = null;
+        let hitLayerGroup: Two.Group | null = null;
+
+        // The top-level children of the scene are the layer groups, in render order.
+        // We need to iterate backwards to check the topmost layer first.
+        const layerGroups = [...this.two.scene.children].filter(c => this.groups.has(c.id));
+        for (let i = layerGroups.length - 1; i >= 0; i--) {
+            const layerGroup = layerGroups[i] as Two.Group;
+            if (!layerGroup.visible) continue;
+            
+            hitObject = this.findTopmostShapeAtPoint(layerGroup, rawX, rawY);
+            if (hitObject) {
+                hitLayerGroup = layerGroup;
+                break;
+            }
+        }
+        
+        if (this.tool === 'select') {
+            if (hitObject) {
+                if (this.selectedShape !== hitObject) {
+                    this.selectShape(hitObject);
+                }
+                const local = this.toLocal(hitObject.parent, rawX, rawY);
+                this.dragOffset = { x: local.x - hitObject.translation.x, y: local.y - hitObject.translation.y };
+                this.isInteracting = true; // Start dragging
+                this.lastInteractedLayerId = hitLayerGroup!.id; // Store the layer ID
+            } else {
+                this.selectShape(null);
+            }
+        } else if (this.tool === 'delete') {
+            if (hitObject && hitLayerGroup) {
+                hitObject.remove();
+                this.generateThumbnail(hitLayerGroup.id); // Generate for the correct layer
+            }
+        }
+        return; // Early return for these tools
+    }
+
+    // Tools that CREATE new objects on the ACTIVE layer
     if (!this.activeLayerId) return;
     const group = this.groups.get(this.activeLayerId);
     if (!group) return;
+
+    // Set the interacted layer ID for creation tools
+    this.lastInteractedLayerId = this.activeLayerId;
     
     if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive) {
       this.isInteracting = true;
@@ -357,11 +404,7 @@ export class CanvasEngine {
     }
 
     this.isInteracting = true;
-    if (this.tool === 'delete') { 
-        this.handleDelete(group, rawX, rawY); 
-    } else if (this.tool === 'select') { 
-        this.handleSelect(group, rawX, rawY); 
-    } else if (this.tool === 'pen') { 
+    if (this.tool === 'pen') { 
         this.handlePenDown(rawX, rawY, group); 
     } else if (this.tool === 'brush') { 
         const local = this.toLocal(group, rawX, rawY);
@@ -374,9 +417,8 @@ export class CanvasEngine {
 
   public handleMove(rawX: number, rawY: number) {
     if (!this.isInteracting) return;
-    if (!this.activeLayerId) return;
-    const group = this.groups.get(this.activeLayerId);
-    if (!group) return;
+    if (!this.activeLayerId && this.tool !== 'select') return;
+    const group = this.activeLayerId ? this.groups.get(this.activeLayerId) : null;
     
     if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive) {
       const local = this.toLocal(this.buildState.container!, rawX, rawY);
@@ -391,7 +433,8 @@ export class CanvasEngine {
       this.currentPath.vertices.push(new Two.Anchor(local.x, local.y));
     } else if (this.tool === 'pen') { 
       this.handlePenMove(rawX, rawY); 
-    } else if (this.tool === 'shape') { 
+    } else if (this.tool === 'shape') {
+      if (!group) return;
       const local = this.toLocal(this.tempShape ? this.tempShape.parent : group, rawX, rawY);
       this.handleShapeMove(local.x, local.y); 
     }
@@ -401,8 +444,11 @@ export class CanvasEngine {
     if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive && this.isInteracting) {
       this.finalizeBuild();
     }
-    if (this.isInteracting && this.activeLayerId) this.generateThumbnail(this.activeLayerId);
-    this.isInteracting = false; 
+    if (this.isInteracting && this.lastInteractedLayerId) {
+      this.generateThumbnail(this.lastInteractedLayerId);
+    }
+    this.isInteracting = false;
+    this.lastInteractedLayerId = null;
     this.currentPath = null;
     if (this.tool === 'pen' && (this.penInteraction.mode !== 'idle')) {
       this.penInteraction.mode = 'idle';
@@ -413,38 +459,16 @@ export class CanvasEngine {
 
   // --- INTERACTION LOGIC ---
 
-  private handleDelete(group: Two.Group, x: number, y: number) {
-    this.two.update();
-    const hitObject = this.findTopmostShapeAtPoint(group, x, y);
-
-    if (hitObject) {
-      hitObject.remove();
-      if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
-    }
-  }
-
-  private handleSelect(group: Two.Group, x: number, y: number) {
-    this.selectedShape = null;
-    this.two.update();
-
-    const hitObject = this.findTopmostShapeAtPoint(group, x, y);
-
-    if (hitObject) {
-      this.selectShape(hitObject);
-      const local = this.toLocal(hitObject.parent, x, y);
-      this.dragOffset = { x: local.x - hitObject.translation.x, y: local.y - hitObject.translation.y };
-      return;
-    }
-    
-    this.onSelectionTypeChange?.(null);
-    this.updateSelectionHandles();
-  }
-
-  private selectShape(shape: any) {
+  private selectShape(shape: any | null) {
     this.selectedShape = shape;
     this.updateSelectionHandles();
-    this.broadcastSelectionType(shape);
-    this.broadcastSelectionProperties(shape);
+    
+    if (shape) {
+        this.broadcastSelectionType(shape);
+        this.broadcastSelectionProperties(shape);
+    } else {
+        this.onSelectionTypeChange?.(null);
+    }
   }
 
   private broadcastSelectionProperties(shape: any) {
@@ -485,33 +509,20 @@ export class CanvasEngine {
     if (!this.selectedShape || this.tool !== 'select') return;
     
     this.two.update(); 
-    const bounds = this.selectedShape.getBoundingClientRect();
+    const bounds = this.selectedShape.getBoundingClientRect(true);
+    
     const group = new Two.Group(); 
     this.transformGroup = group;
     
-    const cx = bounds.left + bounds.width/2 - this.two.width/2;
-    const cy = bounds.top + bounds.height/2 - this.two.height/2;
+    const sceneX = bounds.left + bounds.width / 2 - this.two.width / 2;
+    const sceneY = bounds.top + bounds.height / 2 - this.two.height / 2;
     
-    const rect = new Two.Rectangle(cx, cy, bounds.width + 10, bounds.height + 10);
+    const rect = new Two.Rectangle(sceneX, sceneY, bounds.width + 8, bounds.height + 8);
     rect.noFill(); 
     rect.stroke = '#1565C0'; 
-    rect.linewidth = 2; 
+    rect.linewidth = 1; 
+    rect.dashes = [4, 4];
     group.add(rect);
-
-    const handlePoints = [
-        {x: bounds.left - 5 - this.two.width/2, y: bounds.top - 5 - this.two.height/2},
-        {x: bounds.right + 5 - this.two.width/2, y: bounds.top - 5 - this.two.height/2},
-        {x: bounds.right + 5 - this.two.width/2, y: bounds.bottom + 5 - this.two.height/2},
-        {x: bounds.left - 5 - this.two.width/2, y: bounds.bottom + 5 - this.two.height/2}
-    ];
-
-    handlePoints.forEach(p => {
-      const h = new Two.Circle(p.x, p.y, 5); 
-      h.fill = '#FFFFFF'; 
-      h.stroke = '#1565C0'; 
-      h.linewidth = 1; 
-      group.add(h);
-    });
 
     this.two.scene.add(group);
   }
