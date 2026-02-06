@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useTheme } from '../../Theme.tsx';
 import Button from '../Core/Button.tsx';
 import Input from '../Core/Input.tsx';
@@ -10,12 +10,38 @@ import Select from '../Core/Select.tsx';
 
 interface AssetsPanelProps {
   onExport: (fileName: string, format: 'png' | 'svg') => void;
+  onImportSVG: (svgString: string) => void;
 }
 
-const AssetsPanel: React.FC<AssetsPanelProps> = ({ onExport }) => {
+const AssetsPanel: React.FC<AssetsPanelProps> = ({ onExport, onImportSVG }) => {
     const { theme } = useTheme();
     const [fileName, setFileName] = useState('My Texture');
     const [format, setFormat] = useState<'png' | 'svg'>('png');
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleImportClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file && file.type === "image/svg+xml") {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const svgString = e.target?.result as string;
+                if (svgString) {
+                    onImportSVG(svgString);
+                }
+            };
+            reader.readAsText(file);
+        } else {
+            console.error("Please select a valid SVG file.");
+        }
+        
+        if (event.target) {
+            event.target.value = '';
+        }
+    };
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.M'] }}>
@@ -54,7 +80,20 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({ onExport }) => {
 
             <div style={{ height: '1px', backgroundColor: theme.Color.Base.Surface[3], margin: `${theme.spacing['Space.S']} 0` }} />
 
-            <Button label="Import Image" variant="ghost" size="S" icon="ph-image" />
+            <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept=".svg,image/svg+xml"
+                style={{ display: 'none' }}
+            />
+            <Button 
+                label="Import SVG" 
+                variant="ghost" 
+                size="S" 
+                icon="ph-upload-simple"
+                onClick={handleImportClick}
+            />
             <Button label="Copy Canvas Code" variant="ghost" size="S" icon="ph-code" />
         </div>
     );

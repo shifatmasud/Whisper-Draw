@@ -23,6 +23,7 @@ Hello! You are an AI assistant helping to build this React application. Here are
 -   `components/Core/StateLayer.tsx`
 -   `components/Core/ThemeToggleButton.tsx`
 -   `components/Core/Toggle.tsx`
+-   `components/Package/AIAssistantPanel.tsx`
 -   `components/Package/AssetsPanel.tsx`
 -   `components/Package/LayersPanel.tsx`
 -   `components/Package/PropertiesPanel.tsx`

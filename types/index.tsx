@@ -5,7 +5,7 @@
  */
 
 // --- Window Management ---
-export type WindowId = 'properties' | 'assets' | 'layers';
+export type WindowId = 'properties' | 'assets' | 'layers' | 'aiAssistant';
 
 export interface WindowState {
   id: WindowId;
@@ -14,6 +14,13 @@ export interface WindowState {
   zIndex: number;
   x: number;
   y: number;
+}
+
+// --- AI Assistant ---
+export interface ChatMessage {
+  role: 'user' | 'model';
+  content: string;
+  isSvg?: boolean;
 }
 
 // --- Canvas & Layering ---
@@ -108,7 +115,7 @@ export type ButtonSize = 'S' | 'M' | 'L';
 export interface MetaButtonProps {
   label: string;
   variant: ButtonVariant;
-  size: ButtonSize;
+  size: ButtonVariant;
   icon: string;
   customRadius: string;
   customFill?: string;

@@ -11,12 +11,13 @@ This is a starter project for a modern, theme-aware 2D texture design applicatio
 | **Framework** | React 18.2.0 (ESM via `importmap`) |
 | **Styling** | CSS-in-JS (JS Objects), Semantic Design Tokens |
 | **Animation** | Framer Motion 12.x |
+| **AI Integration** | Google Gemini (`gemini-3-flash-preview`) |
 | **Typography** | Bebas Neue, Comic Neue, Inter, Victor Mono |
 | **Icons** | Phosphor Icons |
 | **State Management** | React Context (`Theme`, `Breakpoint`), Local State (`useState`) |
 | **Architecture** | Atomic-based: `Core` → `Package` → `Section` → `Page` → `App` |
-| **Key Features** | Canvas Editor, Layer System, Tool Properties, Asset I/O |
-| **Key Components** | Floating Windows, Draggable Dock, Toolbar, Canvas Stage |
+| **Key Features** | Canvas Editor, Layer System, **AI SVG Generation**, Tool Properties, Asset I/O |
+| **Key Components** | Floating Windows, Draggable Dock, Toolbar, Canvas Stage, AI Assistant |
 | **Theme System** | Light/Dark Modes, Responsive Tokens |
 | **Inputs** | Range Sliders, Color Pickers, Toggles, Selects |
 
@@ -35,7 +36,7 @@ Imagine you have a digital drawing book. This project gives you all the tools to
     -   `index.tsx`: Defines what a "Layer" or a "Tool" is.
 -   **`components/`**: The LEGO pieces themselves, organized by complexity!
     -   **`Core/`**: The most basic, single-purpose pieces (Button, Slider, LayerItem).
-    -   **`Package/`**: Combines Core pieces into something more useful (`PropertiesPanel`, `LayersPanel`, `Toolbar`).
+    -   **`Package/`**: Combines Core pieces into something more useful (`PropertiesPanel`, `LayersPanel`, `Toolbar`, `AIAssistantPanel`).
     -   **`Section/`**: A whole section of the app (the `Dock` at the bottom, the main `Stage`).
     -   **`Page/`**: A full screen you see (`TextureEditor` page).
     -   **`App/`**: The complete, running application (`MetaPrototype`).
@@ -63,6 +64,7 @@ Imagine you have a digital drawing book. This project gives you all the tools to
 │   │   ├── ThemeToggleButton.tsx
 │   │   └── Toggle.tsx
 │   ├── Package/
+│   │   ├── AIAssistantPanel.tsx
 │   │   ├── AssetsPanel.tsx
 │   │   ├── LayersPanel.tsx
 │   │   ├── PropertiesPanel.tsx
@@ -94,3 +96,4 @@ Imagine you have a digital drawing book. This project gives you all the tools to
 1.  Open the `index.html` file in a modern web browser.
 2.  That's it! The app will run.
 3.  Use the dock to open the Properties and Layers panels, select a tool, and start drawing!
+4.  Click the sparkle icon in the top-right to open the AI Assistant, enter your API key, and generate vector art.

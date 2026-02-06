@@ -14,6 +14,7 @@ import PropertiesPanel from '../Package/PropertiesPanel.tsx';
 import AssetsPanel from '../Package/AssetsPanel.tsx';
 import LayersPanel from '../Package/LayersPanel.tsx';
 import Toolbar from '../Package/Toolbar.tsx';
+import AIAssistantPanel from '../Package/AIAssistantPanel.tsx';
 import { WindowId, WindowState, Layer, Tool, ToolSettings, ShapeType } from '../../types/index.tsx';
 
 /**
@@ -61,11 +62,13 @@ const MetaPrototype = () => {
   const PROPERTIES_PANEL_HEIGHT = 500;
   const ASSETS_PANEL_HEIGHT = 300;
   const LAYERS_PANEL_HEIGHT = 400;
+  const AI_PANEL_HEIGHT = 500;
 
   const [windows, setWindows] = useState<Record<WindowId, WindowState>>({
     properties: { id: 'properties', title: 'Inspector', isOpen: true, zIndex: 3, x: -WINDOW_WIDTH / 2, y: -PROPERTIES_PANEL_HEIGHT / 2 },
     layers: { id: 'layers', title: 'Layers', isOpen: true, zIndex: 2, x: -WINDOW_WIDTH / 2, y: -LAYERS_PANEL_HEIGHT / 2 },
     assets: { id: 'assets', title: 'Assets', isOpen: false, zIndex: 1, x: -WINDOW_WIDTH / 2, y: -ASSETS_PANEL_HEIGHT / 2 },
+    aiAssistant: { id: 'aiAssistant', title: 'AI ASSISTANT', isOpen: true, zIndex: 4, x: window.innerWidth / 2 - WINDOW_WIDTH - 40, y: -AI_PANEL_HEIGHT / 2 },
   });
 
   const bringToFront = (id: WindowId) => {
@@ -353,11 +356,40 @@ const MetaPrototype = () => {
       stageRef.current?.exportImage(fileName, format);
   }, []);
   
+  const handleAddSVGToCanvas = useCallback((svgString: string) => {
+    stageRef.current?.importSVG(svgString);
+  }, []);
+
   // Recursive search for active layer prop
   const activeLayer = useMemo(() => findLayer(layers, activeLayerId || ''), [layers, activeLayerId]);
   
   const handleContentDragStart = useCallback(() => setIsContentDragging(true), []);
   const handleContentDragEnd = useCallback(() => setIsContentDragging(false), []);
+
+  const headerButtonStyles: { [key: string]: React.CSSProperties } = {
+    button: {
+      width: '44px',
+      height: '44px',
+      borderRadius: theme.radius['Radius.Full'],
+      backgroundColor: theme.Color.Base.Surface['2'],
+      border: 'none',
+      cursor: 'grab',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: theme.Color.Base.Content['2'],
+      boxShadow: theme.effects['Effect.Shadow.Drop.1'],
+      overflow: 'hidden',
+      zIndex: 1001,
+      touchAction: 'none',
+      position: 'absolute',
+      top: theme.spacing['Space.L'],
+    },
+    icon: {
+      fontSize: '24px',
+      lineHeight: '0',
+    }
+  };
 
   return (
     <div style={{
@@ -370,6 +402,19 @@ const MetaPrototype = () => {
       alignItems: 'center',
       justifyContent: 'center',
     }}>
+      <motion.button
+        style={{ ...headerButtonStyles.button, right: `calc(${theme.spacing['Space.L']} + 44px + ${theme.spacing['Space.S']})` }}
+        onClick={() => toggleWindow('aiAssistant')}
+        aria-label="Toggle AI Assistant"
+        whileHover={{ scale: 1.1, boxShadow: theme.effects['Effect.Shadow.Drop.2'] }}
+        whileTap={{ scale: 0.95 }}
+        whileDrag={{ scale: 1.1, cursor: 'grabbing', boxShadow: theme.effects['Effect.Shadow.Drop.3'] }}
+        drag
+        dragMomentum={false}
+        transition={{ duration: 0.2 }}
+      >
+          <i className="ph-bold ph-sparkle" style={headerButtonStyles.icon}/>
+      </motion.button>
       <ThemeToggleButton />
       <Toolbar activeTool={activeTool} onToolSelect={setActiveTool} />
 
@@ -440,7 +485,18 @@ const MetaPrototype = () => {
             onClose={() => toggleWindow('assets')}
             onFocus={() => bringToFront('assets')}
           >
-            <AssetsPanel onExport={handleExport} />
+            <AssetsPanel onExport={handleExport} onImportSVG={handleAddSVGToCanvas} />
+          </FloatingWindow>
+        )}
+        
+        {windows.aiAssistant.isOpen && (
+          <FloatingWindow
+            key="aiAssistant"
+            {...windows.aiAssistant}
+            onClose={() => toggleWindow('aiAssistant')}
+            onFocus={() => bringToFront('aiAssistant')}
+          >
+            <AIAssistantPanel onAddToCanvas={handleAddSVGToCanvas} />
           </FloatingWindow>
         )}
       </AnimatePresence>

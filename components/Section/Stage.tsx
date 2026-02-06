@@ -322,6 +322,61 @@ class CanvasEngine {
         }
     }
 
+    public importSVG(svgString: string) {
+        if (!this.activeLayerId) {
+            console.warn('No active layer to import SVG into.');
+            return;
+        }
+        const targetGroup = this.groups.get(this.activeLayerId);
+        if (!targetGroup) {
+            console.warn('Active layer group not found.');
+            return;
+        }
+
+        this.two.load(svgString, (loadedGroup) => {
+            if (!loadedGroup) return;
+
+            loadedGroup.center();
+            loadedGroup.translation.set(0, 0);
+
+            const collectShapes = (node: Two.Group | Two.Shape, collection: Two.Shape[]) => {
+                if (node instanceof Two.Group) {
+                    node.children.forEach(child => collectShapes(child, collection));
+                } else if (node instanceof Two.Shape) {
+                    collection.push(node);
+                }
+            };
+
+            const shapes: Two.Shape[] = [];
+            collectShapes(loadedGroup, shapes);
+
+            shapes.forEach(shape => {
+                const worldMatrix = new Two.Matrix();
+                let current: any = shape;
+                while (current && current.matrix) {
+                    worldMatrix.premultiply(current.matrix);
+                    current = current.parent;
+                }
+
+                const targetInverseMatrix = new Two.Matrix();
+                current = targetGroup;
+                while(current && current.matrix) {
+                    targetInverseMatrix.premultiply(current.matrix);
+                    current = current.parent;
+                }
+                targetInverseMatrix.inverse();
+
+                const newLocalMatrix = targetInverseMatrix.multiply(worldMatrix.elements);
+
+                targetGroup.add(shape);
+                shape.matrix.copy(newLocalMatrix);
+            });
+            
+            this.selectShape(null);
+            if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
+        });
+    }
+
     // --- Core Methods ---
     
     public destroy() {
@@ -646,6 +701,21 @@ class CanvasEngine {
 
 
     // --- Helper Methods ---
+
+    private selectShape(shape: any) {
+        this.selectedShape = shape;
+        this.updateSelectionHandles();
+        this.broadcastSelectionType(shape);
+        if (this.onSelectionPropertiesChange) {
+            const props: Partial<ToolSettings> = {
+                selectionX: shape.translation.x,
+                selectionY: shape.translation.y,
+                selectionRotation: (shape.rotation * 180) / Math.PI,
+                selectionScale: typeof shape.scale === 'number' ? shape.scale : (shape.scale.x || 1),
+            };
+            this.onSelectionPropertiesChange(props);
+        }
+    }
 
     applySettingsToShape(shape: any) {
         shape.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : 'transparent';
@@ -1210,6 +1280,7 @@ export interface StageHandle {
     setPathClosed: (closed: boolean) => void;
     flattenSelectedShape: () => void;
     duplicateLayerContent: (originalId: string, newId: string) => void;
+    importSVG: (svgString: string) => void;
 }
 
 const Stage = forwardRef<StageHandle, StageProps>(({ 
@@ -1269,6 +1340,7 @@ const Stage = forwardRef<StageHandle, StageProps>(({
       setPathClosed: (closed) => engineRef.current?.setPathClosed(closed),
       flattenSelectedShape: () => engineRef.current?.flattenSelectedShape(),
       duplicateLayerContent: (originalId, newId) => engineRef.current?.duplicateLayerContent(originalId, newId),
+      importSVG: (svgString) => engineRef.current?.importSVG(svgString),
   }));
 
   const getLocalCoords = (e: React.PointerEvent) => { const rect = containerRef.current!.getBoundingClientRect(); return { x: e.clientX - rect.left, y: e.clientY - rect.top }; };
