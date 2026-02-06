@@ -33,7 +33,7 @@ const MetaPrototype = () => {
   const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [isAnchorSelected, setIsAnchorSelected] = useState(false);
-  const [selectedObjectType, setSelectedObjectType] = useState<ShapeType | 'path' | null>(null);
+  const [selectedObjectType, setSelectedObjectType] = useState<any>(null);
   
   const [toolSettings, setToolSettings] = useState<ToolSettings>({
     strokeColor: '#000000',
@@ -146,7 +146,6 @@ const MetaPrototype = () => {
     };
 
     setLayers(prevLayers => {
-        // If active layer is a group, add to it. Otherwise add to root (top of list).
         if (activeLayerId) {
              const active = findLayer(prevLayers, activeLayerId);
              if (active && active.type === 'group') {
@@ -191,13 +190,13 @@ const MetaPrototype = () => {
           case 'deleteAnchor': stageRef.current.deleteSelectedAnchor(); break;
           case 'sharpAnchor': stageRef.current.setAnchorSharp(); break;
           case 'flatten': stageRef.current.flattenSelectedShape(); break;
+          case 'ungroup': stageRef.current.ungroupSelected(); break;
       }
   }, []);
 
   const handleDeleteLayer = useCallback((id: string) => {
     setLayers(prevLayers => {
       const newLayers = deleteLayerFromTree(prevLayers, id);
-      // If deleted active layer, fallback
       if (activeLayerId === id) {
           const flat = flattenLayerTree(newLayers);
           if (flat.length > 0) setActiveLayerId(flat[0].id);
@@ -238,13 +237,12 @@ const MetaPrototype = () => {
       setLayers(reorderedLayers);
   }, []);
 
-  // --- Grouping Logic ---
   const handleGroupSelection = useCallback(() => {
       if (!activeLayerId) return;
       setLayers(prev => {
           const layerToGroup = findLayer(prev, activeLayerId);
           if (!layerToGroup) return prev;
-          if (layerToGroup.type === 'group') return prev; // Already a group? Or group the group? Let's assume group the item.
+          if (layerToGroup.type === 'group') return prev; 
 
           const newGroupId = `group-${Date.now()}`;
           const newGroup: Layer = {
@@ -259,7 +257,6 @@ const MetaPrototype = () => {
               isOpen: true
           };
 
-          // Replace the layer with the group containing the layer
           const replaceInTree = (nodes: Layer[]): Layer[] => {
               const idx = nodes.findIndex(n => n.id === activeLayerId);
               if (idx !== -1) {
@@ -296,7 +293,6 @@ const MetaPrototype = () => {
 
   const handleMoveLayer = useCallback((layerId: string, targetGroupId: string | null) => {
     setLayers(prev => {
-        // 1. Find and remove layer from its current position
         let layerToMove: Layer | null = null;
         
         const removeRecursive = (nodes: Layer[]): Layer[] => {
@@ -304,12 +300,8 @@ const MetaPrototype = () => {
             for (const node of nodes) {
                 if (node.id === layerId) {
                     layerToMove = node;
-                    // Don't add to filtered -> Effectively removes it
                 } else {
-                    // Recursively check children
                     const newChildren = removeRecursive(node.children);
-                    // Check if children changed reference to avoid unnecessary updates if not needed? 
-                    // Simpler to just map properly.
                     if (newChildren.length !== node.children.length || newChildren !== node.children) {
                          filtered.push({ ...node, children: newChildren });
                     } else {
@@ -321,20 +313,14 @@ const MetaPrototype = () => {
         };
 
         const layersWithoutItem = removeRecursive(prev);
-        
-        if (!layerToMove) return prev; // Should not happen if logic is correct
+        if (!layerToMove) return prev;
 
-        // 2. Add to target
         if (targetGroupId === null) {
-            // Add to root (Top of the list is visually the "top" layer in many tools, but in Two.js/rendering 0 is bottom.
-            // Let's add to top of array (Bottom of visual stack usually? Or Top? "New Layer" adds to top.)
             return [layerToMove, ...layersWithoutItem];
         } else {
-            // Add to group
             const addToGroupRecursive = (nodes: Layer[]): Layer[] => {
                 return nodes.map(node => {
                     if (node.id === targetGroupId && node.type === 'group') {
-                        // Add to beginning of children array
                         return { ...node, children: [layerToMove!, ...node.children], isOpen: true };
                     }
                     if (node.children.length > 0) {
@@ -360,7 +346,6 @@ const MetaPrototype = () => {
     stageRef.current?.importSVG(svgString);
   }, []);
 
-  // Recursive search for active layer prop
   const activeLayer = useMemo(() => findLayer(layers, activeLayerId || ''), [layers, activeLayerId]);
   
   const handleContentDragStart = useCallback(() => setIsContentDragging(true), []);
@@ -420,7 +405,7 @@ const MetaPrototype = () => {
 
       <Stage
         ref={stageRef}
-        layers={layers} // Pass tree directly
+        layers={layers} 
         activeLayerId={activeLayerId}
         activeTool={activeTool}
         toolSettings={toolSettings}

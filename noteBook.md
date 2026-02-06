@@ -16,6 +16,7 @@ A log of all tasks, ideas, and progress for this project.
 
 ## Done
 
+-   **[2024-05-21 17:00]**: Refactored `Stage.tsx` into a modular `Stage/` folder. Extracted `CanvasEngine` and `PathUtils`. Fixed `importSVG` normalization. Fixed vector path editability bug for nested paths.
 -   **[2024-05-21 16:30]**: Implemented AI Assistant panel with Gemini API integration for generating SVG vector illustrations. Includes API key management and an "Add to Canvas" feature.
 -   **[2024-05-21 16:15]**: Fixed a critical bug where shape fragments in 'Build' mode had incorrect transformations (position, rotation, scale) if the parent layer or original shapes were transformed. Corrected the matrix conversion logic between the geometry and rendering engines.
 -   **[2024-05-21 16:00]**: Fixed a critical bug where shape fragments in 'Build' mode were invisible. The path conversion logic was failing to set a starting "move" command for the new shapes, preventing them from being rendered.

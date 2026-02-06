@@ -93,7 +93,7 @@ export interface ToolSettings {
 }
 
 // --- Engine Events ---
-export type SelectedObjectType = ShapeType | 'path' | null;
+export type SelectedObjectType = ShapeType | 'path' | 'group' | null;
 
 export interface SelectionState {
   layerId: string | null;

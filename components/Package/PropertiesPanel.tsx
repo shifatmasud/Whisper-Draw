@@ -88,7 +88,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       { id: 'polygon', icon: 'ph-polygon', label: 'Poly' }, { id: 'star', icon: 'ph-star', label: 'Star' }, { id: 'line', icon: 'ph-line-segment', label: 'Line' },
   ];
 
-  const isPrimitiveSelected = selectedObjectType && selectedObjectType !== 'path';
+  const isPrimitiveSelected = selectedObjectType && selectedObjectType !== 'path' && selectedObjectType !== 'group';
+  const isGroupSelected = selectedObjectType === 'group';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.M'], height: '100%' }}>
@@ -124,9 +125,18 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                                 <RangeSlider label="Rotation" motionValue={selectionRotationValue} min={0} max={360} step={1} onChange={(v) => onSettingChange('selectionRotation', v)} onCommit={(v) => onSettingChange('selectionRotation', v)} />
                             </div>
 
+                            <div style={groupStyle}>
+                                <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>STYLING</label>
+                                <Toggle label="Override Fill" isOn={toolSettings.fillEnabled} onToggle={() => onSettingChange('fillEnabled', !toolSettings.fillEnabled)} /> 
+                                {toolSettings.fillEnabled && <ColorPicker label="" value={toolSettings.fillColor} onChange={(e) => onSettingChange('fillColor', e.target.value)}/>}
+                                <Toggle label="Override Stroke" isOn={toolSettings.strokeEnabled} onToggle={() => onSettingChange('strokeEnabled', !toolSettings.strokeEnabled)} /> 
+                                {toolSettings.strokeEnabled && <ColorPicker label="" value={toolSettings.strokeColor} onChange={(e) => onSettingChange('strokeColor', e.target.value)}/>}
+                                <RangeSlider label="Stroke Width" motionValue={strokeWidthValue} onChange={(v) => onSettingChange('strokeWidth', v)} onCommit={(v) => onSettingChange('strokeWidth', v)} min={1} max={100}/>
+                            </div>
+
                             {isPrimitiveSelected &&
                             <div style={groupStyle}>
-                                <label style={{...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2]}}>PROPERTIES</label>
+                                <label style={{...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2]}}>PRIMITIVE PROPERTIES</label>
                                 {selectedObjectType === 'rectangle' && <RangeSlider label="Corner Radius" motionValue={cornerRadiusValue} onChange={(v) => onSettingChange('cornerRadius', v)} onCommit={(v) => onSettingChange('cornerRadius', v)} min={0} max={100} />}
                                 {selectedObjectType === 'star' && (<>
                                     <RangeSlider label="Points" motionValue={starPointsValue} onChange={(v) => onSettingChange('starPoints', v)} onCommit={(v) => onSettingChange('starPoints', v)} min={3} max={20} step={1}/>
@@ -135,10 +145,20 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                                 {selectedObjectType === 'polygon' && <RangeSlider label="Sides" motionValue={polygonSidesValue} onChange={(v) => onSettingChange('polygonSides', v)} onCommit={(v) => onSettingChange('polygonSides', v)} min={3} max={12} step={1}/>}
                             </div>
                             }
+
                             <div style={groupStyle}>
-                                <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>SELECTION ACTIONS</label>
-                                {isPrimitiveSelected ? (<Button label="Convert to Path" variant="secondary" size="M" icon="ph-bezier-curve" onClick={() => onPenAction && onPenAction('flatten')} />) 
-                                : (<div style={{...theme.Type.Readable.Body.S, color: theme.Color.Success.Content[1], display: 'flex', alignItems: 'center', gap: '6px'}}><i className="ph-bold ph-check-circle" />Editable Path</div>)}
+                                <label style={{ ...theme.Type.Readable.Label.S, color: theme.Color.Base.Content[2] }}>ACTIONS</label>
+                                {isGroupSelected && (
+                                    <Button label="Ungroup" variant="secondary" size="M" icon="ph-folders" onClick={() => onPenAction && onPenAction('ungroup')} />
+                                )}
+                                {isPrimitiveSelected && (
+                                    <Button label="Convert to Path" variant="secondary" size="M" icon="ph-bezier-curve" onClick={() => onPenAction && onPenAction('flatten')} />
+                                )}
+                                {selectedObjectType === 'path' && (
+                                    <div style={{...theme.Type.Readable.Body.S, color: theme.Color.Success.Content[1], display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                        <i className="ph-bold ph-check-circle" />Editable Path
+                                    </div>
+                                )}
                             </div>
                         </>
                     )}
