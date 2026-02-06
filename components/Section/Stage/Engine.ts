@@ -1,22 +1,21 @@
-
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
 import Two from 'two.js';
-import paper from 'paper';
 import { Layer, Tool, ToolSettings, SelectedObjectType, ShapeType } from '../../../types/index.tsx';
-import { twoMatrixToPaperMatrix, normalizeImportedContent } from './PathUtils.ts';
 
 export class CanvasEngine {
   two: Two;
   thumbTwo: Two;
-  paperScope: paper.PaperScope;
   groups: Map<string, Two.Group> = new Map();
   activeLayerId: string | null = null;
   tool: Tool = 'select';
   settings!: ToolSettings;
+
+  // Offscreen canvas for hit-testing
+  offscreenCanvas: HTMLCanvasElement;
+  offscreenCtx: CanvasRenderingContext2D;
 
   // Callbacks
   onToolChange?: (tool: Tool) => void;
@@ -47,7 +46,7 @@ export class CanvasEngine {
   // Build Mode
   buildState = {
     isActive: false,
-    shards: [] as { two: Two.Shape, paper: paper.PathItem }[],
+    shards: [] as { two: Two.Shape }[],
     originalShapes: [] as any[],
     lassoPath: null as Two.Path | null,
     lassoPoints: [] as {x: number, y: number}[],
@@ -76,9 +75,8 @@ export class CanvasEngine {
       autostart: false
     });
 
-    this.paperScope = new paper.PaperScope();
-    const dummyCanvas = document.createElement('canvas');
-    this.paperScope.setup(dummyCanvas);
+    this.offscreenCanvas = document.createElement('canvas');
+    this.offscreenCtx = this.offscreenCanvas.getContext('2d')!;
   }
 
   // --- CORE API ---
@@ -239,38 +237,93 @@ export class CanvasEngine {
 
   // --- CORE HIT TESTING ---
 
+  private twoPathToPath2D(shape: Two.Path): Path2D {
+    const path2d = new Path2D();
+    if (!shape.vertices || shape.vertices.length === 0) {
+      return path2d;
+    }
+    shape.vertices.forEach((anchor, i) => {
+      switch (anchor.command) {
+        case Two.Commands.move:
+          path2d.moveTo(anchor.x, anchor.y);
+          break;
+        case Two.Commands.line:
+          path2d.lineTo(anchor.x, anchor.y);
+          break;
+        case Two.Commands.curve:
+          const prev = shape.vertices[i - 1];
+          if (!prev) return;
+          const x1 = prev.x + prev.controls.right.x;
+          const y1 = prev.y + prev.controls.right.y;
+          const x2 = anchor.x + anchor.controls.left.x;
+          const y2 = anchor.y + anchor.controls.left.y;
+          path2d.bezierCurveTo(x1, y1, x2, y2, anchor.x, anchor.y);
+          break;
+        case Two.Commands.close:
+          path2d.closePath();
+          break;
+      }
+    });
+    if (shape.closed) {
+      path2d.closePath();
+    }
+    return path2d;
+  }
+
   private findTopmostShapeAt(group: Two.Group, sceneX: number, sceneY: number): any | null {
-    // Reverse loop to check from top-to-bottom z-index
+    // Iterate backwards to find the topmost element
     for (let i = group.children.length - 1; i >= 0; i--) {
-      const child = group.children[i];
-      if (!child.visible) continue;
+        const child = group.children[i];
+        if (!child.visible) continue;
 
-      // If child is a group, recurse. If it returns a hit, we're done.
-      if (child instanceof Two.Group) {
-          const hitInGroup = this.findTopmostShapeAt(child as Two.Group, sceneX, sceneY);
-          if (hitInGroup) {
-              return hitInGroup;
-          }
-      }
-      
-      if (!(child instanceof Two.Shape)) continue;
+        // We need to check against the world bounding box.
+        // two.js getBoundingClientRect() is relative to top-left of canvas.
+        const bounds = child.getBoundingClientRect(true); // true for recursive
+        const clickX_topLeft = sceneX + this.two.width / 2;
+        const clickY_topLeft = sceneY + this.two.height / 2;
 
-      // It's a shape, perform hit test by transforming the point into the shape's local space
-      
-      // Get matrix to transform from world (scene) to child's local space
-      const worldToLocalMatrix = (this.getGlobalMatrix(child).clone() as any).inverse();
-      if (!worldToLocalMatrix) continue;
+        if (clickX_topLeft < bounds.left || clickX_topLeft > bounds.right || clickY_topLeft < bounds.top || clickY_topLeft > bounds.bottom) {
+            continue; // Not even in the bounding box, skip.
+        }
 
-      // Transform the mouse point from scene (world) space to the shape's local space
-      const localMouse = worldToLocalMatrix.multiply(sceneX, sceneY, 1);
-      
-      // Get the shape's bounding box in its own local coordinates
-      const localBounds = child.getBoundingClientRect(false); // shallow = false
+        // If it's a group, we prefer a deeper hit inside it.
+        if (child instanceof Two.Group) {
+            const hitInGroup = this.findTopmostShapeAt(child as Two.Group, sceneX, sceneY);
+            // If we found a specific shape, return it. Otherwise, we've hit the group.
+            return hitInGroup || child;
+        }
 
-      if (localMouse.x >= localBounds.left && localMouse.x <= localBounds.right &&
-          localMouse.y >= localBounds.top && localMouse.y <= localBounds.bottom) {
-          return child;
-      }
+        // If we are here, it's a shape. Do a precise check.
+        if (child instanceof Two.Shape) {
+            const worldMatrix = this.getGlobalMatrix(child);
+            const inverseMatrix = worldMatrix.clone().inverse();
+            if (!inverseMatrix) continue;
+            
+            const localPoint = inverseMatrix.multiply(sceneX, sceneY, 1);
+            
+            let pathForTest: Two.Path;
+            if (child instanceof Two.Path) {
+                pathForTest = child;
+            } else if (typeof (child as any).toPath === 'function') {
+                pathForTest = (child as any).toPath((child as any).closed !== false);
+            } else {
+                continue;
+            }
+            const path2d = this.twoPathToPath2D(pathForTest);
+            this.offscreenCtx.setTransform(1, 0, 0, 1, 0, 0);
+            this.offscreenCtx.lineWidth = child.linewidth || 0;
+            let hit = false;
+            if (child.fill && child.fill !== 'transparent' && child.fill !== 'none') {
+                if (this.offscreenCtx.isPointInPath(path2d, localPoint.x, localPoint.y)) hit = true;
+            }
+            if (!hit && child.stroke && child.stroke !== 'transparent' && child.stroke !== 'none' && child.linewidth > 0) {
+                if (this.offscreenCtx.isPointInStroke(path2d, localPoint.x, localPoint.y)) hit = true;
+            }
+
+            if (hit) {
+                return child; // Precise hit on a shape
+            }
+        }
     }
     return null;
   }
@@ -279,13 +332,10 @@ export class CanvasEngine {
     if (!this.activeLayerId) return false;
     const rootGroup = this.groups.get(this.activeLayerId);
     if (!rootGroup) return false;
-
     this.two.update();
     const sceneX = x - this.two.width / 2;
     const sceneY = y - this.two.height / 2;
-    
     const hitObject = this.findTopmostShapeAt(rootGroup, sceneX, sceneY);
-    
     if (hitObject && hitObject instanceof Two.Path) {
         this.penPath = hitObject as Two.Path;
         this.selectedShape = null;
@@ -327,7 +377,12 @@ export class CanvasEngine {
     if (!group) return;
     this.two.load(svgString, (loadedGroup: Two.Group) => {
       if (loadedGroup) {
-        normalizeImportedContent(loadedGroup);
+        (loadedGroup as any).children.forEach((child: any) => {
+          if (child instanceof Two.Shape) {
+            if (child.fill === undefined || child.fill === 'none') child.fill = 'black';
+            if (child.stroke === undefined) child.stroke = 'transparent';
+          }
+        });
         loadedGroup.center();
         loadedGroup.translation.set(0, 0);
         group.add(loadedGroup);
@@ -786,46 +841,30 @@ export class CanvasEngine {
     if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
   }
   
-  private twoShapeToPaperPath(twoShape: any): paper.PathItem | null {
-    this.paperScope.project.activeLayer.removeChildren();
-    if (!twoShape) return null;
-    const tempTwo = new Two({ type: Two.Types.svg, width: 1, height: 1 });
-    const clone = twoShape.clone();
-    const worldMatrix = this.getGlobalMatrix(twoShape);
-    clone.matrix.identity();
-    tempTwo.add(clone);
-    tempTwo.update();
-    const svgString = tempTwo.renderer.domElement.outerHTML;
-    if (!svgString) return null;
-    const item = this.paperScope.project.importSVG(svgString, { expandShapes: true });
-    if (!item) return null;
-    const paperMatrix = twoMatrixToPaperMatrix(worldMatrix, this.paperScope);
-    item.transform(paperMatrix);
-    let pathItem: paper.PathItem | null = null;
-    if (item instanceof this.paperScope.PathItem) { pathItem = item; } 
-    else if (item instanceof this.paperScope.Group && item.children.length > 0) {
-        const compound = new this.paperScope.CompoundPath({ children: item.children.filter(c => c instanceof this.paperScope.PathItem), fillRule: 'evenodd' });
-        item.remove(); pathItem = compound;
+  private getPathInWorldCoords(shape: any): Two.Path | null {
+    if (!(shape instanceof Two.Shape)) return null;
+    let path: Two.Path;
+    if (shape instanceof Two.Path) {
+      path = shape.clone();
+    } else if (typeof shape.toPath === 'function') {
+      path = shape.toPath((shape as any).closed !== false);
+      path.fill = shape.fill; path.stroke = shape.stroke; path.linewidth = shape.linewidth;
+    } else {
+      return null;
     }
-    return pathItem;
-  }
-
-  private paperPathToTwoShape(paperPath: paper.PathItem, parentGroup: Two.Group): Two.Shape {
-      const svgString = (paperPath as any).exportSVG({ asString: true });
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = svgString;
-      const svgNode = tempDiv.querySelector('svg');
-      if (!svgNode) return new Two.Path([], false, false);
-      const loadedShape = this.two.interpret(svgNode);
-      loadedShape.remove();
-      const parentMatrixInv = (this.getGlobalMatrix(parentGroup).clone() as any).inverse();
-      if (parentMatrixInv) { loadedShape.matrix.premultiply(parentMatrixInv); }
-      if (loadedShape.children.length === 1 && loadedShape.children[0] instanceof Two.Path) {
-          const child = loadedShape.children[0];
-          child.matrix.premultiply(loadedShape.matrix);
-          loadedShape.remove(child); return child;
+    const worldMatrix = this.getGlobalMatrix(shape);
+    path.vertices.forEach(v => {
+      const p = worldMatrix.multiply(v.x, v.y, 1);
+      if (v.controls) {
+        const l = worldMatrix.multiply(v.x + v.controls.left.x, v.y + v.controls.left.y, 1);
+        v.controls.left.set(l.x - p.x, l.y - p.y);
+        const r = worldMatrix.multiply(v.x + v.controls.right.x, v.y + v.controls.right.y, 1);
+        v.controls.right.set(r.x - p.x, r.y - p.y);
       }
-      return loadedShape;
+      v.set(p.x, p.y);
+    });
+    path.matrix.identity();
+    return path;
   }
 
   private enterBuildMode() {
@@ -837,23 +876,18 @@ export class CanvasEngine {
     this.buildState.container = new Two.Group();
     this.two.scene.add(this.buildState.container);
     this.buildState.originalShapes = [...group.children];
-    this.buildState.originalShapes.forEach(s => s.visible = false);
-    this.paperScope.project.activeLayer.removeChildren();
-    const paperPaths = this.buildState.originalShapes.map(s => this.twoShapeToPaperPath(s)).filter(p => p) as paper.PathItem[];
-    if (paperPaths.length === 0) { this.exitBuildMode(); return; }
-    let combined: paper.PathItem = paperPaths[0];
-    for (let i = 1; i < paperPaths.length; i++) { combined = combined.unite(paperPaths[i]); }
-    const items = combined.children ? [...combined.children] : [combined];
-    this.buildState.shards = items.map(item => {
-        const twoShard = this.paperPathToTwoShape(item as paper.PathItem, this.buildState.container!);
+    this.buildState.shards = this.buildState.originalShapes.map(s => ({ two: s.clone() }));
+
+    this.buildState.shards.forEach(shard => {
         const applyShardStyle = (s: any) => {
             if (s instanceof Two.Group) s.children.forEach(applyShardStyle);
             else { s.fill = '#007bff33'; s.stroke = '#007bff'; s.linewidth = 1; }
         };
-        applyShardStyle(twoShard);
-        this.buildState.container!.add(twoShard);
-        return { two: twoShard, paper: item as paper.PathItem };
+        applyShardStyle(shard.two);
+        this.buildState.container!.add(shard.two);
     });
+
+    this.buildState.originalShapes.forEach(s => s.visible = false);
     this.buildState.lassoPath = new Two.Path([], false, false, true);
     this.buildState.lassoPath.fill = '#007bff22'; this.buildState.lassoPath.stroke = '#007bff';
     this.buildState.lassoPath.linewidth = 1; this.buildState.lassoPath.dashes = [4, 4];
@@ -878,33 +912,84 @@ export class CanvasEngine {
   private finalizeBuild() {
     if (!this.buildState.isActive || !this.activeLayerId || this.buildState.lassoPoints.length < 3) { this.enterBuildMode(); return; }
     const group = this.groups.get(this.activeLayerId); if (!group) return;
-    this.paperScope.project.activeLayer.removeChildren();
-    const lassoPaper = new this.paperScope.Path(this.buildState.lassoPoints.map(p => new this.paperScope.Point(p.x, p.y)));
-    lassoPaper.closed = true;
-    const selectedShards: paper.PathItem[] = [];
-    const remainingShards: paper.PathItem[] = [];
-    this.buildState.shards.forEach(shard => {
-        if (lassoPaper.intersects(shard.paper) || lassoPaper.contains(shard.paper.bounds)) { selectedShards.push(shard.paper); } 
-        else { remainingShards.push(shard.paper); }
+    
+    const lassoTwo = new Two.Path(this.buildState.lassoPoints.map(p => new Two.Anchor(p.x, p.y)), true);
+    
+    const selectedClones: Two.Shape[] = [];
+    const unselectedClones: Two.Shape[] = [];
+
+    this.buildState.shards.forEach((shard, i) => {
+      const worldShard = this.getPathInWorldCoords(this.buildState.originalShapes[i]);
+      if (worldShard) {
+        const intersectionResult = worldShard.intersection(lassoTwo);
+        if (intersectionResult && intersectionResult.children.length > 0) {
+          selectedClones.push(this.buildState.originalShapes[i]);
+        } else {
+          unselectedClones.push(this.buildState.originalShapes[i]);
+        }
+        if (intersectionResult) intersectionResult.remove();
+        worldShard.remove();
+      } else {
+        unselectedClones.push(this.buildState.originalShapes[i]);
+      }
     });
-    if (selectedShards.length === 0) { this.enterBuildMode(); return; }
-    group.remove(group.children); 
-    let finalPaperShapes: paper.PathItem[] = [];
-    if (this.settings.buildMode === 'add' && selectedShards.length > 1) {
-        let united: paper.PathItem = selectedShards[0];
-        for (let i = 1; i < selectedShards.length; i++) { united = united.unite(selectedShards[i]); }
-        finalPaperShapes = [...remainingShards, united];
-    } else if (this.settings.buildMode === 'subtract') { finalPaperShapes = remainingShards; } 
-    else { finalPaperShapes = [...remainingShards, ...selectedShards]; }
-    finalPaperShapes.forEach(shape => {
-      const twoShape = this.paperPathToTwoShape(shape, group);
+
+    lassoTwo.remove();
+
+    if (selectedClones.length === 0) { this.enterBuildMode(); return; }
+
+    group.remove(...group.children); 
+
+    let finalResult = new Two.Group();
+
+    if (this.settings.buildMode === 'add') {
+      if (selectedClones.length > 1) {
+        const selectedAsWorld = selectedClones.map(s => this.getPathInWorldCoords(s)).filter(p => p) as (Two.Path | Two.Group)[];
+        let combined = selectedAsWorld[0];
+        for (let i = 1; i < selectedAsWorld.length; i++) {
+          const nextCombined = combined.union(selectedAsWorld[i]);
+          combined.remove();
+          selectedAsWorld[i].remove();
+          combined = nextCombined;
+        }
+        finalResult.add(combined);
+      } else {
+        selectedClones.forEach(s => finalResult.add(s.clone()));
+      }
+      unselectedClones.forEach(s => finalResult.add(s.clone()));
+    } else { // subtract
+      if (selectedClones.length > 1) {
+        const sortedWorldClones = selectedClones
+            .map(s => this.getPathInWorldCoords(s))
+            .filter(p => p)
+            .sort((a, b) => b!.getBoundingClientRect(true).area - a!.getBoundingClientRect(true).area) as (Two.Path | Two.Group)[];
+        
+        let baseShape = sortedWorldClones[0];
+        for (let i = 1; i < sortedWorldClones.length; i++) {
+            const nextBase = baseShape.subtraction(sortedWorldClones[i]);
+            baseShape.remove();
+            sortedWorldClones[i].remove();
+            baseShape = nextBase;
+        }
+        finalResult.add(baseShape);
+      }
+      unselectedClones.forEach(s => finalResult.add(s.clone()));
+    }
+
+    const parentMatrixInv = this.getGlobalMatrix(group).clone().inverse();
+    finalResult.children.forEach(shape => {
+      if (parentMatrixInv) { shape.matrix.premultiply(parentMatrixInv); }
       const applyFinalStyle = (s: any) => {
           if (s instanceof Two.Group) s.children.forEach(applyFinalStyle);
-          else if (s instanceof Two.Path) { s.fill = this.settings.fillColor; s.stroke = this.settings.strokeColor; s.linewidth = this.settings.strokeWidth; }
+          else if (s instanceof Two.Shape) { s.fill = this.settings.fillColor; s.stroke = this.settings.strokeColor; s.linewidth = this.settings.strokeWidth; }
       };
-      applyFinalStyle(twoShape); group.add(twoShape);
+      applyFinalStyle(shape); 
+      group.add(shape);
     });
-    this.exitBuildMode(); this.enterBuildMode();
+    
+    finalResult.remove();
+    this.exitBuildMode();
+    this.enterBuildMode();
   }
 
   private handleBrushDown(x: number, y: number, group: Two.Group) {
