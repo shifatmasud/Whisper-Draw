@@ -1,5 +1,4 @@
 
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -205,8 +204,9 @@ export class CanvasEngine {
 
   // --- COORDINATE HELPERS ---
 
-  private get canvasRect(): DOMRect {
-    return this.two.renderer.domElement.getBoundingClientRect();
+  private get scenePoint() {
+      // helper?
+      return { x: 0, y: 0 };
   }
 
   public getGlobalMatrix(obj: any): Two.Matrix {
@@ -237,36 +237,54 @@ export class CanvasEngine {
     return { x: transformed.x, y: transformed.y };
   }
 
-  // --- CORE HIT TESTING ---
+  // --- ROBUST HIT TESTING ---
 
-  public tryEnterEditMode(x: number, y: number): boolean {
+  private hitTest(obj: any, sceneX: number, sceneY: number): boolean {
+    if (!obj.visible) return false;
+    
+    // Convert scene point to object's local space
+    const globalMatrix = this.getGlobalMatrix(obj);
+    const mInv = (globalMatrix.clone() as any).inverse();
+    if (!mInv) return false;
+    
+    const local = mInv.multiply(sceneX, sceneY, 1);
+    
+    // Get local bounds (shallow=true for internal coordinates)
+    const bounds = obj.getBoundingClientRect(true);
+    
+    // Hit test against local bounding box
+    return (
+      local.x >= bounds.left &&
+      local.x <= bounds.right &&
+      local.y >= bounds.top &&
+      local.y <= bounds.bottom
+    );
+  }
+
+  public tryEnterEditMode(canvasX: number, canvasY: number): boolean {
     if (!this.activeLayerId) return false;
     const rootGroup = this.groups.get(this.activeLayerId);
     if (!rootGroup) return false;
 
-    this.two.update();
+    const sceneX = canvasX - this.two.width / 2;
+    const sceneY = canvasY - this.two.height / 2;
 
-    const canvasRect = this.canvasRect;
-    const viewportX = x + canvasRect.left;
-    const viewportY = y + canvasRect.top;
-
-    const findPathAtPoint = (g: Two.Group, targetX: number, targetY: number): Two.Path | null => {
+    const findPathAtPoint = (g: Two.Group): Two.Path | null => {
         for (let i = g.children.length - 1; i >= 0; i--) {
             const child = g.children[i];
             if (child instanceof Two.Path) {
-                const bounds = child.getBoundingClientRect();
-                if (targetX >= bounds.left && targetX <= bounds.right && targetY >= bounds.top && targetY <= bounds.bottom) {
-                    return child as Two.Path;
+                if (this.hitTest(child, sceneX, sceneY)) {
+                  return child as Two.Path;
                 }
             } else if (child instanceof Two.Group) {
-                const found = findPathAtPoint(child as Two.Group, targetX, targetY);
+                const found = findPathAtPoint(child as Two.Group);
                 if (found) return found;
             }
         }
         return null;
     };
 
-    const path = findPathAtPoint(rootGroup, viewportX, viewportY);
+    const path = findPathAtPoint(rootGroup);
     if (path) {
         this.penPath = path;
         this.selectedShape = null;
@@ -333,6 +351,9 @@ export class CanvasEngine {
     if (!this.activeLayerId) return;
     const group = this.groups.get(this.activeLayerId);
     if (!group) return;
+
+    const sceneX = rawX - this.two.width / 2;
+    const sceneY = rawY - this.two.height / 2;
     
     if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive) {
       this.isInteracting = true;
@@ -345,9 +366,9 @@ export class CanvasEngine {
 
     this.isInteracting = true;
     if (this.tool === 'delete') { 
-        this.handleDelete(group, rawX, rawY); 
+        this.handleDelete(group, sceneX, sceneY); 
     } else if (this.tool === 'select') { 
-        this.handleSelect(group, rawX, rawY); 
+        this.handleSelect(group, sceneX, sceneY); 
     } else if (this.tool === 'pen') { 
         this.handlePenDown(rawX, rawY, group); 
     } else if (this.tool === 'brush') { 
@@ -398,17 +419,12 @@ export class CanvasEngine {
     }
   }
 
-  // --- INTERACTION LOGIC ---
+  // --- INTERACTION LOGIC (INTERNAL COORDINATES) ---
 
-  private handleDelete(group: Two.Group, x: number, y: number) {
-    const canvasRect = this.canvasRect;
-    const viewportX = x + canvasRect.left;
-    const viewportY = y + canvasRect.top;
-
+  private handleDelete(group: Two.Group, sceneX: number, sceneY: number) {
     for (let i = group.children.length - 1; i >= 0; i--) {
       const child = group.children[i];
-      const bounds = child.getBoundingClientRect();
-      if (viewportX >= bounds.left && viewportX <= bounds.right && viewportY >= bounds.top && viewportY <= bounds.bottom) {
+      if (this.hitTest(child, sceneX, sceneY)) {
         child.remove();
         if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
         break;
@@ -416,19 +432,16 @@ export class CanvasEngine {
     }
   }
 
-  private handleSelect(group: Two.Group, x: number, y: number) {
+  private handleSelect(group: Two.Group, sceneX: number, sceneY: number) {
     this.selectedShape = null;
 
-    const canvasRect = this.canvasRect;
-    const viewportX = x + canvasRect.left;
-    const viewportY = y + canvasRect.top;
-    
     for (let i = group.children.length - 1; i >= 0; i--) {
       const child = group.children[i];
-      const bounds = child.getBoundingClientRect();
-      if (viewportX >= bounds.left && viewportX <= bounds.right && viewportY >= bounds.top && viewportY <= bounds.bottom) {
+      if (this.hitTest(child, sceneX, sceneY)) {
         this.selectShape(child);
-        const local = this.toLocal(child.parent, x, y);
+        const globalMatrix = this.getGlobalMatrix(child.parent);
+        const mInv = (globalMatrix.clone() as any).inverse();
+        const local = mInv ? mInv.multiply(sceneX, sceneY, 1) : { x: sceneX, y: sceneY };
         this.dragOffset = { x: local.x - child.translation.x, y: local.y - child.translation.y };
         return;
       }
