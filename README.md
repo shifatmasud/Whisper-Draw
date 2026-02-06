@@ -74,20 +74,7 @@ Imagine you have a digital drawing book. This project gives you all the tools to
 │   │   └── TextureEditor.tsx
 │   └── Section/
 │       ├── Dock.tsx
-│       └── Stage/
-│           ├── Engine.ts
-│           ├── PathUtils.ts
-│           ├── index.tsx
-│           └── modules/
-│               ├── BuildModeManager.ts
-│               ├── Conversions.ts
-│               ├── IOManager.ts
-│               ├── InteractionManager.ts
-│               ├── PenToolManager.ts
-│               ├── SelectToolManager.ts
-│               ├── ShapeToolManager.ts
-│               ├── Util.ts
-│               └── VectorManager.ts
+│       └── Stage.tsx
 ├── hooks/
 │   ├── useBreakpoint.tsx
 │   └── useDraw.tsx
