@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -62,6 +63,7 @@ export class CanvasEngine {
       autostart: true,
     }).appendTo(container);
 
+    // Center the scene
     this.two.scene.translation.set(this.two.width / 2, this.two.height / 2);
 
     const thumbCanvas = document.createElement('canvas');
@@ -194,6 +196,7 @@ export class CanvasEngine {
         this.groups.delete(id);
       }
     });
+    // Ensure overlays stay on top
     if (this.transformGroup) { this.two.scene.remove(this.transformGroup); this.two.scene.add(this.transformGroup); }
     if (this.penHelpers) { this.two.scene.remove(this.penHelpers); this.two.scene.add(this.penHelpers); }
     if (this.buildState.container) { this.two.scene.remove(this.buildState.container); this.two.scene.add(this.buildState.container); }
@@ -201,32 +204,37 @@ export class CanvasEngine {
 
   // --- COORDINATE HELPERS ---
 
-  private getGlobalMatrix(obj: any): Two.Matrix {
+  /**
+   * Computes the global matrix of a Two.js object by traversing up the parent tree.
+   */
+  public getGlobalMatrix(obj: any): Two.Matrix {
     const matrix = new Two.Matrix();
-    if (!obj || obj === this.two.scene) return matrix;
-
     const stack: any[] = [];
     let current = obj;
-    while (current && current !== this.two.scene) {
+    while (current && current.parent) {
       stack.push(current);
       current = current.parent;
     }
-
+    // Standard Two.js matrix multiplication: result = matrix * other
+    // For a stack of nested transforms, we multiply from root down to leaf.
     for (let i = stack.length - 1; i >= 0; i--) {
-      const m = stack[i]._matrix;
-      if (m) matrix.multiply(...m.elements);
+      // Force an update to ensure the local matrix is current
+      stack[i].update(); 
+      matrix.multiply(stack[i].matrix);
     }
-
     return matrix;
   }
 
-  private toLocal(obj: any, sceneX: number, sceneY: number) {
+  /**
+   * Translates global canvas coordinates to local object coordinates.
+   */
+  private toLocal(obj: any, globalX: number, globalY: number) {
     const globalMatrix = this.getGlobalMatrix(obj);
-    const m = globalMatrix.clone().invert();
+    const m = (globalMatrix.clone() as any).inverse();
     
-    if (!m) return { x: sceneX, y: sceneY };
+    if (!m) return { x: globalX, y: globalY };
 
-    const transformed = m.multiply(sceneX, sceneY, 1);
+    const transformed = m.multiply(globalX, globalY, 1);
     return { x: transformed.x, y: transformed.y };
   }
 
@@ -243,7 +251,7 @@ export class CanvasEngine {
         for (let i = g.children.length - 1; i >= 0; i--) {
             const child = g.children[i];
             if (child instanceof Two.Path) {
-                const bounds = child.getBoundingClientRect(true);
+                const bounds = child.getBoundingClientRect();
                 if (targetX >= bounds.left && targetX <= bounds.right && targetY >= bounds.top && targetY <= bounds.bottom) {
                     return child as Two.Path;
                 }
@@ -309,14 +317,13 @@ export class CanvasEngine {
   // --- INTERACTION ---
 
   public handleDown(rawX: number, rawY: number) {
-    const x = rawX - this.two.width / 2;
-    const y = rawY - this.two.height / 2;
     const now = Date.now();
     
+    // Multi-click logic
     if (now - this.lastClickTime < 300) {
       if (this.tool === 'pen') { this.finishPath(); this.lastClickTime = 0; return; }
       if (this.tool === 'select' && this.selectedShape && this.settings.selectionMode === 'vector') {
-          if (this.tryEnterEditMode(x, y)) { this.lastClickTime = 0; return; }
+          if (this.tryEnterEditMode(rawX, rawY)) { this.lastClickTime = 0; return; }
       }
     }
     this.lastClickTime = now;
@@ -325,58 +332,54 @@ export class CanvasEngine {
     const group = this.groups.get(this.activeLayerId);
     if (!group) return;
     
+    // Build Mode Hit Testing
     if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive) {
       this.isInteracting = true;
-      const local = this.toLocal(this.buildState.container!, x, y);
-      this.buildState.lassoPoints = []; this.buildState.lassoPath!.vertices = [];
+      const local = this.toLocal(this.buildState.container!, rawX, rawY);
+      this.buildState.lassoPoints = []; 
+      if (this.buildState.lassoPath) this.buildState.lassoPath.vertices = [];
       this.updateBuildLasso(local.x, local.y);
       return;
     }
 
     this.isInteracting = true;
-    if (this.tool === 'delete') { this.handleDelete(group, x, y); }
-    else if (this.tool === 'select') { 
-      const local = this.toLocal(group, x, y);
-      this.handleSelect(group, x, y, local); 
-    }
-    else if (this.tool === 'pen') { 
-      this.handlePenDown(x, y, group); 
-    }
-    else if (this.tool === 'brush') { 
-      const local = this.toLocal(group, x, y);
-      this.handleBrushDown(local.x, local.y, group); 
-    }
-    else if (this.tool === 'shape') { 
-      const local = this.toLocal(group, x, y);
-      this.handleShapeDown(local.x, local.y, group, x, y); 
+    if (this.tool === 'delete') { 
+        this.handleDelete(group, rawX, rawY); 
+    } else if (this.tool === 'select') { 
+        this.handleSelect(group, rawX, rawY); 
+    } else if (this.tool === 'pen') { 
+        this.handlePenDown(rawX, rawY, group); 
+    } else if (this.tool === 'brush') { 
+        const local = this.toLocal(group, rawX, rawY);
+        this.handleBrushDown(local.x, local.y, group); 
+    } else if (this.tool === 'shape') { 
+        const local = this.toLocal(group, rawX, rawY);
+        this.handleShapeDown(local.x, local.y, group); 
     }
   }
 
   public handleMove(rawX: number, rawY: number) {
     if (!this.isInteracting) return;
-    const x = rawX - this.two.width / 2;
-    const y = rawY - this.two.height / 2;
     if (!this.activeLayerId) return;
     const group = this.groups.get(this.activeLayerId);
     if (!group) return;
     
     if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive) {
-      const local = this.toLocal(this.buildState.container!, x, y);
+      const local = this.toLocal(this.buildState.container!, rawX, rawY);
       this.updateBuildLasso(local.x, local.y);
     } else if (this.tool === 'select' && this.selectedShape) {
-      const local = this.toLocal(this.selectedShape.parent, x, y);
+      const local = this.toLocal(this.selectedShape.parent, rawX, rawY);
       this.selectedShape.translation.set(local.x - this.dragOffset.x, local.y - this.dragOffset.y);
       this.updateSelectionHandles();
       this.onSelectionPropertiesChange?.({ selectionX: this.selectedShape.translation.x, selectionY: this.selectedShape.translation.y });
     } else if (this.tool === 'brush' && this.currentPath) {
-      const local = this.toLocal(this.currentPath.parent, x, y);
+      const local = this.toLocal(this.currentPath.parent, rawX, rawY);
       this.currentPath.vertices.push(new Two.Anchor(local.x, local.y));
     } else if (this.tool === 'pen') { 
-      this.handlePenMove(x, y); 
-    }
-    else if (this.tool === 'shape') { 
-      const local = this.toLocal(this.tempShape ? this.tempShape.parent : group, x, y);
-      this.handleShapeMove(local.x, local.y, x, y); 
+      this.handlePenMove(rawX, rawY); 
+    } else if (this.tool === 'shape') { 
+      const local = this.toLocal(this.tempShape ? this.tempShape.parent : group, rawX, rawY);
+      this.handleShapeMove(local.x, local.y); 
     }
   }
 
@@ -399,7 +402,7 @@ export class CanvasEngine {
   private handleDelete(group: Two.Group, x: number, y: number) {
     for (let i = group.children.length - 1; i >= 0; i--) {
       const child = group.children[i];
-      const bounds = child.getBoundingClientRect(true);
+      const bounds = child.getBoundingClientRect();
       if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
         child.remove();
         if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
@@ -408,13 +411,14 @@ export class CanvasEngine {
     }
   }
 
-  private handleSelect(group: Two.Group, x: number, y: number, local: { x: number, y: number }) {
+  private handleSelect(group: Two.Group, x: number, y: number) {
     this.selectedShape = null;
     for (let i = group.children.length - 1; i >= 0; i--) {
       const child = group.children[i];
-      const bounds = child.getBoundingClientRect(true);
+      const bounds = child.getBoundingClientRect();
       if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
         this.selectShape(child);
+        const local = this.toLocal(child.parent, x, y);
         this.dragOffset = { x: local.x - child.translation.x, y: local.y - child.translation.y };
         return;
       }
@@ -466,89 +470,50 @@ export class CanvasEngine {
   private updateSelectionHandles() {
     if (this.transformGroup) { this.two.remove(this.transformGroup); this.transformGroup = null; }
     if (!this.selectedShape || this.tool !== 'select') return;
-    const bounds = this.selectedShape.getBoundingClientRect(true);
-    const group = new Two.Group(); this.transformGroup = group;
-    const rect = new Two.Rectangle(bounds.left + bounds.width/2, bounds.top + bounds.height/2, bounds.width + 10, bounds.height + 10);
-    rect.noFill(); rect.stroke = '#1565C0'; rect.linewidth = 2; group.add(rect);
-    [{x: bounds.left-5, y: bounds.top-5}, {x: bounds.right+5, y: bounds.top-5}, {x: bounds.right+5, y: bounds.bottom+5}, {x: bounds.left-5, y: bounds.bottom+5}].forEach(p => {
-      const h = new Two.Circle(p.x, p.y, 5); h.fill = '#FFFFFF'; h.stroke = '#1565C0'; h.linewidth = 1; group.add(h);
-    });
-    this.two.add(group);
-  }
-
-  // --- VECTOR EDITING ---
-
-  public setPathClosed(closed: boolean) {
-    if (this.penPath) {
-        this.penPath.closed = closed;
-        this.updatePenHelpers();
-    }
-  }
-
-  public deleteSelectedAnchor() {
-      if (this.penPath && this.selectedAnchorIdx > -1 && this.penPath.vertices.length > 1) {
-          this.penPath.vertices.splice(this.selectedAnchorIdx, 1);
-          this.updateAnchorSelection(-1); // Deselect
-          this.updatePenHelpers();
-      }
-  }
-
-  public setAnchorSharp() {
-      if (this.penPath && this.selectedAnchorIdx > -1) {
-          const v = this.penPath.vertices[this.selectedAnchorIdx];
-          if (v && v.controls) {
-              v.controls.left.set(0, 0);
-              v.controls.right.set(0, 0);
-              this.updatePenHelpers();
-          }
-      }
-  }
-  
-  public duplicateLayerContent(originalId: string, newId: string) {
-      const originalGroup = this.groups.get(originalId);
-      if (originalGroup) {
-          const clone = originalGroup.clone();
-          clone.id = newId;
-          this.groups.set(newId, clone);
-      }
-  }
-
-  public ungroupSelected() {
-    if (!this.selectedShape || !(this.selectedShape instanceof Two.Group)) return;
-
-    const group = this.selectedShape;
-    const parent = group.parent;
-    if (!parent) return;
-
-    this.two.update();
-
-    const parentWorldInverse = this.getGlobalMatrix(parent).clone().invert();
-    if (!parentWorldInverse) return;
     
-    const children = [...group.children];
-
-    children.forEach(child => {
-        const childWorldMatrix = this.getGlobalMatrix(child);
-        parent.add(child);
-        const newLocalMatrix = parentWorldInverse.clone().multiply(...childWorldMatrix.elements);
-        child.matrix.copy(newLocalMatrix);
-    });
+    this.two.update(); // Update to ensure bounds are accurate
+    const bounds = this.selectedShape.getBoundingClientRect();
+    const group = new Two.Group(); 
+    this.transformGroup = group;
     
-    group.remove();
-    this.selectedShape = null;
-    this.updateSelectionHandles();
-    this.onSelectionTypeChange?.(null);
-    if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
+    // Centers of bounds are canvas-global, we need them relative to scene translation if we add to scene
+    // But adding directly to scene. Scene already has translation.
+    // getBoundingClientRect is canvas-absolute. Scene is at width/2, height/2.
+    const cx = bounds.left + bounds.width/2 - this.two.width/2;
+    const cy = bounds.top + bounds.height/2 - this.two.height/2;
+    
+    const rect = new Two.Rectangle(cx, cy, bounds.width + 10, bounds.height + 10);
+    rect.noFill(); 
+    rect.stroke = '#1565C0'; 
+    rect.linewidth = 2; 
+    group.add(rect);
+
+    const handlePoints = [
+        {x: bounds.left - 5 - this.two.width/2, y: bounds.top - 5 - this.two.height/2},
+        {x: bounds.right + 5 - this.two.width/2, y: bounds.top - 5 - this.two.height/2},
+        {x: bounds.right + 5 - this.two.width/2, y: bounds.bottom + 5 - this.two.height/2},
+        {x: bounds.left - 5 - this.two.width/2, y: bounds.bottom + 5 - this.two.height/2}
+    ];
+
+    handlePoints.forEach(p => {
+      const h = new Two.Circle(p.x, p.y, 5); 
+      h.fill = '#FFFFFF'; 
+      h.stroke = '#1565C0'; 
+      h.linewidth = 1; 
+      group.add(h);
+    });
+
+    this.two.scene.add(group);
   }
 
   // --- PEN TOOL LOGIC ---
 
-  private handlePenDown(sceneX: number, sceneY: number, group: Two.Group) {
+  private handlePenDown(rawX: number, rawY: number, group: Two.Group) {
     const HIT = 12;
     if (this.penPath && this.selectedAnchorIdx !== -1) {
       const v = this.penPath.vertices[this.selectedAnchorIdx];
       if (v && v.controls) {
-        const local = this.toLocal(this.penPath, sceneX, sceneY);
+        const local = this.toLocal(this.penPath.parent, rawX, rawY);
         const lx = v.x + v.controls.left.x, ly = v.y + v.controls.left.y;
         const rx = v.x + v.controls.right.x, ry = v.y + v.controls.right.y;
         if (Math.hypot(local.x - lx, local.y - ly) < HIT) { this.penInteraction = { mode: 'dragging-handle-left', dragStart: {x: local.x, y: local.y}, initialPos: {x: lx, y: ly} }; return; }
@@ -556,7 +521,7 @@ export class CanvasEngine {
       }
     }
     if (this.penPath) {
-      const local = this.toLocal(this.penPath, sceneX, sceneY);
+      const local = this.toLocal(this.penPath.parent, rawX, rawY);
       for (let i = 0; i < this.penPath.vertices.length; i++) {
         if (Math.hypot(local.x - this.penPath.vertices[i].x, local.y - this.penPath.vertices[i].y) < HIT) {
           if (i === 0 && this.penPath.vertices.length > 2 && !this.penPath.closed) { this.penPath.closed = true; this.finishPath(); return; }
@@ -577,12 +542,12 @@ export class CanvasEngine {
       path.linewidth = this.settings.strokeWidth; 
       path.fill = this.settings.fillEnabled ? this.settings.fillColor : 'transparent';
       group.add(path); this.penPath = path;
-      const local = this.toLocal(path, sceneX, sceneY);
+      const local = this.toLocal(group, rawX, rawY);
       path.vertices.push(new Two.Anchor(local.x, local.y, 0,0,0,0, Two.Commands.curve)); 
       this.updateAnchorSelection(0);
       this.penInteraction = { mode: 'creating', dragStart: {x: local.x, y: local.y}, initialPos: {x: local.x, y: local.y} };
     } else {
-      const local = this.toLocal(this.penPath, sceneX, sceneY);
+      const local = this.toLocal(group, rawX, rawY);
       this.penPath.vertices.push(new Two.Anchor(local.x, local.y, 0,0,0,0, Two.Commands.curve)); 
       this.updateAnchorSelection(this.penPath.vertices.length - 1);
       this.penInteraction = { mode: 'creating', dragStart: {x: local.x, y: local.y}, initialPos: {x: local.x, y: local.y} };
@@ -590,9 +555,9 @@ export class CanvasEngine {
     this.updatePenHelpers();
   }
 
-  private handlePenMove(sceneX: number, sceneY: number) {
-    if (!this.penPath || this.penInteraction.mode === 'idle') return;
-    const local = this.toLocal(this.penPath, sceneX, sceneY);
+  private handlePenMove(rawX: number, rawY: number) {
+    if (!this.penPath || this.penInteraction.mode === 'idle' || !this.penPath.parent) return;
+    const local = this.toLocal(this.penPath.parent, rawX, rawY);
     const v = this.penPath.vertices[this.selectedAnchorIdx]; 
     if (!v || !v.controls) return;
     
@@ -625,7 +590,12 @@ export class CanvasEngine {
     this.penHelpers = h;
     
     const matrix = this.getGlobalMatrix(this.penPath);
-    h.matrix.copy(matrix);
+    // Align helper with parent matrix but we need it relative to scene
+    const sceneMatrixInv = (this.getGlobalMatrix(this.two.scene).clone() as any).inverse();
+    if (sceneMatrixInv) {
+        const localToScene = sceneMatrixInv.clone().multiply(matrix);
+        h.matrix.copy(localToScene);
+    }
     
     this.penPath.vertices.forEach((v: any, i: number) => {
       const sel = i === this.selectedAnchorIdx;
@@ -645,19 +615,19 @@ export class CanvasEngine {
         h.add(cL, cR);
       }
     });
-    this.two.add(h);
+    this.two.scene.add(h);
   }
 
   // --- PRIMITIVES & BUILD ---
 
-  private handleShapeDown(localX: number, localY: number, group: Two.Group, globalX: number, globalY: number) {
+  private handleShapeDown(localX: number, localY: number, group: Two.Group) {
     if (this.settings.shapeMode === 'build') return;
     this.shapeOrigin = { x: localX, y: localY };
     let s: any;
     if (this.settings.shapeType === 'rectangle') { 
       this.tempShape = new Two.Group(); 
       group.add(this.tempShape); 
-      this.handleShapeMove(localX, localY, globalX, globalY); 
+      this.handleShapeMove(localX, localY); 
       return; 
     }
     else if (this.settings.shapeType === 'ellipse') s = new Two.Ellipse(localX, localY, 0, 0);
@@ -674,7 +644,7 @@ export class CanvasEngine {
     }
   }
 
-  private handleShapeMove(localX: number, localY: number, globalX: number, globalY: number) {
+  private handleShapeMove(localX: number, localY: number) {
     if (!this.tempShape || this.settings.shapeMode === 'build') return;
     if (this.tempShape instanceof Two.Line) { 
       this.tempShape.vertices[1].x = localX; 
@@ -738,100 +708,63 @@ export class CanvasEngine {
     else leaf(s);
   }
   
-  /**
-   * Converts a Two.js shape into a Paper.js PathItem using SVG as an intermediary.
-   * This is robust for all shape types, including primitives.
-   * @param twoShape The Two.js shape to convert.
-   * @returns A Paper.js PathItem, or null on failure.
-   */
   private twoShapeToPaperPath(twoShape: any): paper.PathItem | null {
     this.paperScope.project.activeLayer.removeChildren();
     if (!twoShape) return null;
 
-    // Use a temporary in-memory SVG renderer with Two.js
     const tempTwo = new Two({
       type: Two.Types.svg,
-      width: 1, height: 1 // Dimensions aren't critical
+      width: 1, height: 1
     });
 
     const clone = twoShape.clone();
-    
-    // Get the shape's world matrix to be applied later in Paper.js
     const worldMatrix = this.getGlobalMatrix(twoShape);
-    
-    // Export the clone with a clean identity matrix
     clone.matrix.identity();
     tempTwo.add(clone);
     tempTwo.update();
 
     const svgString = tempTwo.renderer.domElement.outerHTML;
-    
     if (!svgString) return null;
     
-    // Import the SVG string into Paper.js
-    // expandShapes is crucial for converting primitives like <rect> into paths for boolean ops
     const item = this.paperScope.project.importSVG(svgString, { expandShapes: true });
-    
     if (!item) return null;
 
-    // Now, apply the original world transformation to the imported Paper.js item
     const paperMatrix = twoMatrixToPaperMatrix(worldMatrix, this.paperScope);
     item.transform(paperMatrix);
     
-    // Often, a single shape will be imported within a group, so we try to simplify.
     let pathItem: paper.PathItem | null = null;
-    if (item instanceof this.paperScope.PathItem) { // PathItem is base for Path, CompoundPath
+    if (item instanceof this.paperScope.PathItem) {
         pathItem = item;
     } else if (item instanceof this.paperScope.Group && item.children.length > 0) {
-        // If it's a group of paths, compound it for easier boolean operations
         const compound = new this.paperScope.CompoundPath({
             children: item.children.filter(c => c instanceof this.paperScope.PathItem),
             fillRule: 'evenodd',
         });
-        item.remove(); // clean up the group wrapper
+        item.remove();
         pathItem = compound;
     }
     
     return pathItem;
   }
 
-  /**
-   * Converts a Paper.js path back into a Two.js shape using SVG as an intermediary.
-   * @param paperPath The Paper.js item to convert.
-   * @param parentGroup The target Two.js group for the new shape.
-   * @returns A Two.Shape (typically a Two.Group or Two.Path).
-   */
   private paperPathToTwoShape(paperPath: paper.PathItem, parentGroup: Two.Group): Two.Shape {
-      // Export Paper.js item to an SVG string.
       const svgString = (paperPath as any).exportSVG({ asString: true });
-      
-      // Create a DOM node from the string for Two.js to interpret.
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = svgString;
       const svgNode = tempDiv.querySelector('svg');
 
-      if (!svgNode) {
-          return new Two.Path([], false, false); // Return empty path on failure
-      }
+      if (!svgNode) return new Two.Path([], false, false);
 
-      // Synchronously interpret the SVG node. This adds the result to the main scene.
       const loadedShape = this.two.interpret(svgNode);
-      // Immediately remove it from the main scene to manage it manually.
       loadedShape.remove();
 
-      // We now have the shape with its world matrix from the SVG.
-      // We need to convert this to a local matrix relative to its new parent.
-      // M_local = M_parent_inverse * M_world
-      const parentMatrixInv = this.getGlobalMatrix(parentGroup).clone().invert();
+      const parentMatrixInv = (this.getGlobalMatrix(parentGroup).clone() as any).inverse();
       if (parentMatrixInv) {
         loadedShape.matrix.premultiply(parentMatrixInv);
       }
       
-      // The result of interpretation is always a Two.Group.
-      // If it contains just one path, we can simplify and return the path directly.
       if (loadedShape.children.length === 1 && loadedShape.children[0] instanceof Two.Path) {
           const child = loadedShape.children[0];
-          // The child's matrix is local to the group. We need to apply the group's new local matrix to it.
           child.matrix.premultiply(loadedShape.matrix);
           loadedShape.remove(child);
           return child;
@@ -849,7 +782,7 @@ export class CanvasEngine {
     
     this.buildState.isActive = true;
     this.buildState.container = new Two.Group();
-    this.two.add(this.buildState.container);
+    this.two.scene.add(this.buildState.container);
     
     this.buildState.originalShapes = [...group.children];
     this.buildState.originalShapes.forEach(s => s.visible = false);
@@ -868,13 +801,8 @@ export class CanvasEngine {
         const twoShard = this.paperPathToTwoShape(item as paper.PathItem, this.buildState.container!);
         
         const applyShardStyle = (s: any) => {
-            if (s instanceof Two.Group) {
-                s.children.forEach(applyShardStyle);
-            } else {
-                s.fill = '#007bff33';
-                s.stroke = '#007bff';
-                s.linewidth = 1;
-            }
+            if (s instanceof Two.Group) s.children.forEach(applyShardStyle);
+            else { s.fill = '#007bff33'; s.stroke = '#007bff'; s.linewidth = 1; }
         };
         applyShardStyle(twoShard);
 
@@ -909,7 +837,7 @@ export class CanvasEngine {
   
   private finalizeBuild() {
     if (!this.buildState.isActive || !this.activeLayerId || this.buildState.lassoPoints.length < 3) {
-      this.enterBuildMode(); // Reset view
+      this.enterBuildMode(); 
       return;
     }
 
@@ -935,7 +863,7 @@ export class CanvasEngine {
         this.enterBuildMode(); return;
     }
     
-    group.remove(group.children); // Clear the layer
+    group.remove(group.children); 
     
     let finalPaperShapes: paper.PathItem[] = [];
 
@@ -953,57 +881,48 @@ export class CanvasEngine {
     
     finalPaperShapes.forEach(shape => {
       const twoShape = this.paperPathToTwoShape(shape, group);
-
       const applyFinalStyle = (s: any) => {
-          if (s instanceof Two.Group) {
-              s.children.forEach(applyFinalStyle);
-          } else if (s instanceof Two.Path) { // Check if it's a drawable shape
+          if (s instanceof Two.Group) s.children.forEach(applyFinalStyle);
+          else if (s instanceof Two.Path) {
               s.fill = this.settings.fillColor;
               s.stroke = this.settings.strokeColor;
               s.linewidth = this.settings.strokeWidth;
           }
       };
       applyFinalStyle(twoShape);
-
       group.add(twoShape);
     });
 
     this.exitBuildMode();
-    this.enterBuildMode(); // Re-initialize with new shapes
+    this.enterBuildMode();
   }
 
 
   private handleBrushDown(x: number, y: number, group: Two.Group) {
       const p = new Two.Path([new Two.Anchor(x, y)], false, true);
       p.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : '#000';
-      p.linewidth = this.settings.strokeWidth; p.fill = 'transparent';
-      group.add(p); this.currentPath = p;
+      p.linewidth = this.settings.strokeWidth; 
+      p.fill = 'transparent';
+      group.add(p); 
+      this.currentPath = p;
   }
   
   public flattenSelectedShape() {
       if (!this.selectedShape) return;
-      
       const s = this.selectedShape;
       const parent = s.parent;
       if (!parent) return;
 
       const isPrimitive = s instanceof Two.Rectangle || s instanceof Two.Ellipse || s instanceof Two.Polygon || s instanceof Two.Star || s instanceof Two.Line || s._isRoundedRect;
-      
-      if (s instanceof Two.Path && !isPrimitive) {
-          return;
-      }
+      if (s instanceof Two.Path && !isPrimitive) return;
 
       let path: any;
-      
       if (typeof s.toPath === 'function') {
         const isClosed = s.closed !== undefined ? s.closed : true;
         path = s.toPath(isClosed);
-      } 
-      else if (s instanceof Two.Path) {
+      } else if (s instanceof Two.Path) {
         path = s.clone();
-      } else {
-        return;
-      }
+      } else return;
 
       path.matrix.copy(s.matrix);
       path.fill = s.fill;
@@ -1016,7 +935,6 @@ export class CanvasEngine {
       
       parent.add(path);
       s.remove();
-      
       this.selectShape(path);
       if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
   }
