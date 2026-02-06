@@ -171,12 +171,7 @@ const MetaPrototype = () => {
   }, []);
   
   const handleToolSettingChange = useCallback((key: keyof ToolSettings, value: any) => {
-    setToolSettings(prev => {
-        if (key === 'penClosePath') {
-            stageRef.current?.setPathClosed(value);
-        }
-        return ({...prev, [key]: value});
-    });
+    setToolSettings(prev => ({...prev, [key]: value}));
   }, []);
 
   const handleSelectionPropertiesChange = useCallback((properties: Partial<ToolSettings>) => {

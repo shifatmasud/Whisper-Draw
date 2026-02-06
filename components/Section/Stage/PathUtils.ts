@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -40,10 +41,15 @@ export const splitBezier = (v1: any, v2: any, t: number) => {
 
 /**
  * Converts Two.js matrix to Paper.js matrix.
+ * Two.js elements: [a, b, c, d, e, f, g, h, i] (column-major in terms of translation index)
+ * [0] a [3] c [6] tx
+ * [1] b [4] d [7] ty
+ * [2] 0 [5] 0 [8] 1
+ * Paper.js constructor: Matrix(a, b, c, d, tx, ty)
  */
 export const twoMatrixToPaperMatrix = (twoMatrix: any, paperScope: paper.PaperScope): paper.Matrix => {
   const m = twoMatrix.elements;
-  return new paperScope.Matrix(m[0], m[3], m[1], m[4], m[6], m[7]);
+  return new paperScope.Matrix(m[0], m[1], m[3], m[4], m[6], m[7]);
 };
 
 /**

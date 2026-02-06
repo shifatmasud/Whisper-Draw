@@ -204,36 +204,27 @@ export class CanvasEngine {
 
   // --- COORDINATE HELPERS ---
 
-  /**
-   * Computes the global matrix of a Two.js object by traversing up the parent tree.
-   */
   public getGlobalMatrix(obj: any): Two.Matrix {
     const matrix = new Two.Matrix();
     const stack: any[] = [];
     let current = obj;
-    while (current && current.parent) {
+    while (current) {
       stack.push(current);
       current = current.parent;
     }
-    // Standard Two.js matrix multiplication: result = matrix * other
-    // For a stack of nested transforms, we multiply from root down to leaf.
     for (let i = stack.length - 1; i >= 0; i--) {
-      // Force an update to ensure the local matrix is current
-      stack[i].update(); 
+      if (typeof stack[i]._update === 'function') {
+        stack[i]._update();
+      }
       matrix.multiply(stack[i].matrix);
     }
     return matrix;
   }
 
-  /**
-   * Translates global canvas coordinates to local object coordinates.
-   */
   private toLocal(obj: any, globalX: number, globalY: number) {
     const globalMatrix = this.getGlobalMatrix(obj);
     const m = (globalMatrix.clone() as any).inverse();
-    
     if (!m) return { x: globalX, y: globalY };
-
     const transformed = m.multiply(globalX, globalY, 1);
     return { x: transformed.x, y: transformed.y };
   }
@@ -268,6 +259,7 @@ export class CanvasEngine {
         this.penPath = path;
         this.selectedShape = null;
         if (this.transformGroup) { this.two.remove(this.transformGroup); this.transformGroup = null; }
+        this.updateAnchorSelection(-1);
         this.setTool('pen');
         this.onToolChange?.('pen');
         this.updatePenHelpers();
@@ -318,8 +310,6 @@ export class CanvasEngine {
 
   public handleDown(rawX: number, rawY: number) {
     const now = Date.now();
-    
-    // Multi-click logic
     if (now - this.lastClickTime < 300) {
       if (this.tool === 'pen') { this.finishPath(); this.lastClickTime = 0; return; }
       if (this.tool === 'select' && this.selectedShape && this.settings.selectionMode === 'vector') {
@@ -332,7 +322,6 @@ export class CanvasEngine {
     const group = this.groups.get(this.activeLayerId);
     if (!group) return;
     
-    // Build Mode Hit Testing
     if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive) {
       this.isInteracting = true;
       const local = this.toLocal(this.buildState.container!, rawX, rawY);
@@ -471,14 +460,11 @@ export class CanvasEngine {
     if (this.transformGroup) { this.two.remove(this.transformGroup); this.transformGroup = null; }
     if (!this.selectedShape || this.tool !== 'select') return;
     
-    this.two.update(); // Update to ensure bounds are accurate
+    this.two.update(); 
     const bounds = this.selectedShape.getBoundingClientRect();
     const group = new Two.Group(); 
     this.transformGroup = group;
     
-    // Centers of bounds are canvas-global, we need them relative to scene translation if we add to scene
-    // But adding directly to scene. Scene already has translation.
-    // getBoundingClientRect is canvas-absolute. Scene is at width/2, height/2.
     const cx = bounds.left + bounds.width/2 - this.two.width/2;
     const cy = bounds.top + bounds.height/2 - this.two.height/2;
     
@@ -588,9 +574,7 @@ export class CanvasEngine {
     
     const h = new Two.Group(); 
     this.penHelpers = h;
-    
     const matrix = this.getGlobalMatrix(this.penPath);
-    // Align helper with parent matrix but we need it relative to scene
     const sceneMatrixInv = (this.getGlobalMatrix(this.two.scene).clone() as any).inverse();
     if (sceneMatrixInv) {
         const localToScene = sceneMatrixInv.clone().multiply(matrix);
@@ -603,7 +587,6 @@ export class CanvasEngine {
       c.fill = sel ? '#1565C0' : (i === 0 ? '#4CAF50' : '#FFFFFF'); 
       c.stroke = '#1565C0'; 
       h.add(c);
-      
       if (sel && v.controls) {
         const lx = v.x + v.controls.left.x, ly = v.y + v.controls.left.y, rx = v.x + v.controls.right.x, ry = v.y + v.controls.right.y;
         const lL = new Two.Line(v.x, v.y, lx, ly), lR = new Two.Line(v.x, v.y, rx, ry); 
@@ -616,6 +599,40 @@ export class CanvasEngine {
       }
     });
     this.two.scene.add(h);
+  }
+
+  // --- PEN API ---
+  
+  public setPathClosed(closed: boolean) {
+    if (this.penPath) {
+      this.penPath.closed = closed;
+      this.updatePenHelpers();
+    }
+  }
+
+  public deleteSelectedAnchor() {
+    if (!this.penPath || this.selectedAnchorIdx === -1) return;
+    if (this.penPath.vertices.length <= 2) {
+      this.penPath.remove();
+      this.penPath = null;
+      this.updateAnchorSelection(-1);
+    } else {
+      this.penPath.vertices.splice(this.selectedAnchorIdx, 1);
+      this.updateAnchorSelection(Math.max(0, this.selectedAnchorIdx - 1));
+    }
+    this.updatePenHelpers();
+    if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
+  }
+
+  public setAnchorSharp() {
+    if (!this.penPath || this.selectedAnchorIdx === -1) return;
+    const v = this.penPath.vertices[this.selectedAnchorIdx];
+    if (v && v.controls) {
+      v.controls.left.set(0, 0);
+      v.controls.right.set(0, 0);
+      this.updatePenHelpers();
+      if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
+    }
   }
 
   // --- PRIMITIVES & BUILD ---
@@ -668,10 +685,7 @@ export class CanvasEngine {
   private handleShapeUp() {
     if (this.tempShape instanceof Two.Group && this.activeLayerId) {
       const r = this.tempShape.children[0];
-      if (r) { 
-        this.tempShape.remove(r); 
-        this.groups.get(this.activeLayerId)?.add(r); 
-      }
+      if (r) { this.tempShape.remove(r); this.groups.get(this.activeLayerId)?.add(r); }
       this.tempShape.remove();
     }
     this.tempShape = null;
@@ -707,43 +721,58 @@ export class CanvasEngine {
     if (s instanceof Two.Group) s.children.forEach((c: any) => leaf(c)); 
     else leaf(s);
   }
+
+  public duplicateLayerContent(originalId: string, newId: string) {
+    const original = this.groups.get(originalId);
+    if (!original) return;
+    const copy = original.clone();
+    copy.id = newId;
+    this.groups.set(newId, copy);
+  }
+
+  public ungroupSelected() {
+    if (!this.selectedShape || !(this.selectedShape instanceof Two.Group)) return;
+    const group = this.selectedShape;
+    const parent = group.parent;
+    if (!parent) return;
+
+    const children = [...group.children];
+    children.forEach(child => {
+      const matrix = this.getGlobalMatrix(child);
+      const parentMatrixInv = (this.getGlobalMatrix(parent).clone() as any).inverse();
+      child.remove();
+      parent.add(child);
+      if (parentMatrixInv) {
+          child.matrix.copy(parentMatrixInv.multiply(matrix));
+      }
+    });
+    group.remove();
+    this.selectedShape = null;
+    this.updateSelectionHandles();
+    if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
+  }
   
   private twoShapeToPaperPath(twoShape: any): paper.PathItem | null {
     this.paperScope.project.activeLayer.removeChildren();
     if (!twoShape) return null;
-
-    const tempTwo = new Two({
-      type: Two.Types.svg,
-      width: 1, height: 1
-    });
-
+    const tempTwo = new Two({ type: Two.Types.svg, width: 1, height: 1 });
     const clone = twoShape.clone();
     const worldMatrix = this.getGlobalMatrix(twoShape);
     clone.matrix.identity();
     tempTwo.add(clone);
     tempTwo.update();
-
     const svgString = tempTwo.renderer.domElement.outerHTML;
     if (!svgString) return null;
-    
     const item = this.paperScope.project.importSVG(svgString, { expandShapes: true });
     if (!item) return null;
-
     const paperMatrix = twoMatrixToPaperMatrix(worldMatrix, this.paperScope);
     item.transform(paperMatrix);
-    
     let pathItem: paper.PathItem | null = null;
-    if (item instanceof this.paperScope.PathItem) {
-        pathItem = item;
-    } else if (item instanceof this.paperScope.Group && item.children.length > 0) {
-        const compound = new this.paperScope.CompoundPath({
-            children: item.children.filter(c => c instanceof this.paperScope.PathItem),
-            fillRule: 'evenodd',
-        });
-        item.remove();
-        pathItem = compound;
+    if (item instanceof this.paperScope.PathItem) { pathItem = item; } 
+    else if (item instanceof this.paperScope.Group && item.children.length > 0) {
+        const compound = new this.paperScope.CompoundPath({ children: item.children.filter(c => c instanceof this.paperScope.PathItem), fillRule: 'evenodd' });
+        item.remove(); pathItem = compound;
     }
-    
     return pathItem;
   }
 
@@ -752,69 +781,48 @@ export class CanvasEngine {
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = svgString;
       const svgNode = tempDiv.querySelector('svg');
-
       if (!svgNode) return new Two.Path([], false, false);
-
       const loadedShape = this.two.interpret(svgNode);
       loadedShape.remove();
-
       const parentMatrixInv = (this.getGlobalMatrix(parentGroup).clone() as any).inverse();
-      if (parentMatrixInv) {
-        loadedShape.matrix.premultiply(parentMatrixInv);
-      }
-      
+      if (parentMatrixInv) { loadedShape.matrix.premultiply(parentMatrixInv); }
       if (loadedShape.children.length === 1 && loadedShape.children[0] instanceof Two.Path) {
           const child = loadedShape.children[0];
           child.matrix.premultiply(loadedShape.matrix);
-          loadedShape.remove(child);
-          return child;
+          loadedShape.remove(child); return child;
       }
-
       return loadedShape;
   }
-
 
   private enterBuildMode() {
     this.exitBuildMode();
     if (!this.activeLayerId) return;
     const group = this.groups.get(this.activeLayerId);
     if (!group || group.children.length === 0) return;
-    
     this.buildState.isActive = true;
     this.buildState.container = new Two.Group();
     this.two.scene.add(this.buildState.container);
-    
     this.buildState.originalShapes = [...group.children];
     this.buildState.originalShapes.forEach(s => s.visible = false);
-    
     this.paperScope.project.activeLayer.removeChildren();
     const paperPaths = this.buildState.originalShapes.map(s => this.twoShapeToPaperPath(s)).filter(p => p) as paper.PathItem[];
     if (paperPaths.length === 0) { this.exitBuildMode(); return; }
-
     let combined: paper.PathItem = paperPaths[0];
-    for (let i = 1; i < paperPaths.length; i++) {
-        combined = combined.unite(paperPaths[i]);
-    }
-
+    for (let i = 1; i < paperPaths.length; i++) { combined = combined.unite(paperPaths[i]); }
     const items = combined.children ? [...combined.children] : [combined];
     this.buildState.shards = items.map(item => {
         const twoShard = this.paperPathToTwoShape(item as paper.PathItem, this.buildState.container!);
-        
         const applyShardStyle = (s: any) => {
             if (s instanceof Two.Group) s.children.forEach(applyShardStyle);
             else { s.fill = '#007bff33'; s.stroke = '#007bff'; s.linewidth = 1; }
         };
         applyShardStyle(twoShard);
-
         this.buildState.container!.add(twoShard);
         return { two: twoShard, paper: item as paper.PathItem };
     });
-    
     this.buildState.lassoPath = new Two.Path([], false, false, true);
-    this.buildState.lassoPath.fill = '#007bff22';
-    this.buildState.lassoPath.stroke = '#007bff';
-    this.buildState.lassoPath.linewidth = 1;
-    this.buildState.lassoPath.dashes = [4, 4];
+    this.buildState.lassoPath.fill = '#007bff22'; this.buildState.lassoPath.stroke = '#007bff';
+    this.buildState.lassoPath.linewidth = 1; this.buildState.lassoPath.dashes = [4, 4];
     this.buildState.container!.add(this.buildState.lassoPath);
   }
 
@@ -823,10 +831,8 @@ export class CanvasEngine {
     this.buildState.isActive = false; 
     this.buildState.container?.remove(); 
     this.buildState.originalShapes.forEach(s => s.visible = true);
-    this.buildState.shards = [];
-    this.buildState.originalShapes = [];
-    this.buildState.container = null;
-    this.buildState.lassoPath = null;
+    this.buildState.shards = []; this.buildState.originalShapes = [];
+    this.buildState.container = null; this.buildState.lassoPath = null;
   }
 
   private updateBuildLasso(x: number, y: number) {
@@ -836,112 +842,58 @@ export class CanvasEngine {
   }
   
   private finalizeBuild() {
-    if (!this.buildState.isActive || !this.activeLayerId || this.buildState.lassoPoints.length < 3) {
-      this.enterBuildMode(); 
-      return;
-    }
-
-    const group = this.groups.get(this.activeLayerId);
-    if (!group) return;
-
+    if (!this.buildState.isActive || !this.activeLayerId || this.buildState.lassoPoints.length < 3) { this.enterBuildMode(); return; }
+    const group = this.groups.get(this.activeLayerId); if (!group) return;
     this.paperScope.project.activeLayer.removeChildren();
     const lassoPaper = new this.paperScope.Path(this.buildState.lassoPoints.map(p => new this.paperScope.Point(p.x, p.y)));
     lassoPaper.closed = true;
-
     const selectedShards: paper.PathItem[] = [];
     const remainingShards: paper.PathItem[] = [];
-    
     this.buildState.shards.forEach(shard => {
-        if (lassoPaper.intersects(shard.paper) || lassoPaper.contains(shard.paper.bounds)) {
-            selectedShards.push(shard.paper);
-        } else {
-            remainingShards.push(shard.paper);
-        }
+        if (lassoPaper.intersects(shard.paper) || lassoPaper.contains(shard.paper.bounds)) { selectedShards.push(shard.paper); } 
+        else { remainingShards.push(shard.paper); }
     });
-
-    if (selectedShards.length === 0) {
-        this.enterBuildMode(); return;
-    }
-    
+    if (selectedShards.length === 0) { this.enterBuildMode(); return; }
     group.remove(group.children); 
-    
     let finalPaperShapes: paper.PathItem[] = [];
-
     if (this.settings.buildMode === 'add' && selectedShards.length > 1) {
         let united: paper.PathItem = selectedShards[0];
-        for (let i = 1; i < selectedShards.length; i++) {
-            united = united.unite(selectedShards[i]);
-        }
+        for (let i = 1; i < selectedShards.length; i++) { united = united.unite(selectedShards[i]); }
         finalPaperShapes = [...remainingShards, united];
-    } else if (this.settings.buildMode === 'subtract') {
-        finalPaperShapes = remainingShards;
-    } else {
-        finalPaperShapes = [...remainingShards, ...selectedShards];
-    }
-    
+    } else if (this.settings.buildMode === 'subtract') { finalPaperShapes = remainingShards; } 
+    else { finalPaperShapes = [...remainingShards, ...selectedShards]; }
     finalPaperShapes.forEach(shape => {
       const twoShape = this.paperPathToTwoShape(shape, group);
       const applyFinalStyle = (s: any) => {
           if (s instanceof Two.Group) s.children.forEach(applyFinalStyle);
-          else if (s instanceof Two.Path) {
-              s.fill = this.settings.fillColor;
-              s.stroke = this.settings.strokeColor;
-              s.linewidth = this.settings.strokeWidth;
-          }
+          else if (s instanceof Two.Path) { s.fill = this.settings.fillColor; s.stroke = this.settings.strokeColor; s.linewidth = this.settings.strokeWidth; }
       };
-      applyFinalStyle(twoShape);
-      group.add(twoShape);
+      applyFinalStyle(twoShape); group.add(twoShape);
     });
-
-    this.exitBuildMode();
-    this.enterBuildMode();
+    this.exitBuildMode(); this.enterBuildMode();
   }
-
 
   private handleBrushDown(x: number, y: number, group: Two.Group) {
       const p = new Two.Path([new Two.Anchor(x, y)], false, true);
       p.stroke = this.settings.strokeEnabled ? this.settings.strokeColor : '#000';
-      p.linewidth = this.settings.strokeWidth; 
-      p.fill = 'transparent';
-      group.add(p); 
-      this.currentPath = p;
+      p.linewidth = this.settings.strokeWidth; p.fill = 'transparent';
+      group.add(p); this.currentPath = p;
   }
   
   public flattenSelectedShape() {
       if (!this.selectedShape) return;
-      const s = this.selectedShape;
-      const parent = s.parent;
-      if (!parent) return;
-
+      const s = this.selectedShape; const parent = s.parent; if (!parent) return;
       const isPrimitive = s instanceof Two.Rectangle || s instanceof Two.Ellipse || s instanceof Two.Polygon || s instanceof Two.Star || s instanceof Two.Line || s._isRoundedRect;
       if (s instanceof Two.Path && !isPrimitive) return;
-
       let path: any;
-      if (typeof s.toPath === 'function') {
-        const isClosed = s.closed !== undefined ? s.closed : true;
-        path = s.toPath(isClosed);
-      } else if (s instanceof Two.Path) {
-        path = s.clone();
-      } else return;
-
-      path.matrix.copy(s.matrix);
-      path.fill = s.fill;
-      path.stroke = s.stroke;
-      path.linewidth = s.linewidth;
-      path.opacity = s.opacity;
-      path.visible = s.visible;
-      path.cap = s.cap;
-      path.join = s.join;
-      
-      parent.add(path);
-      s.remove();
-      this.selectShape(path);
+      if (typeof s.toPath === 'function') { const isClosed = s.closed !== undefined ? s.closed : true; path = s.toPath(isClosed); } 
+      else if (s instanceof Two.Path) { path = s.clone(); } else return;
+      path.matrix.copy(s.matrix); path.fill = s.fill; path.stroke = s.stroke;
+      path.linewidth = s.linewidth; path.opacity = s.opacity; path.visible = s.visible;
+      path.cap = s.cap; path.join = s.join;
+      parent.add(path); s.remove(); this.selectShape(path);
       if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
   }
 
-  public destroy() { 
-    this.two.pause(); 
-    this.two.renderer.domElement.remove(); 
-    this.thumbTwo.renderer.domElement.remove(); 
-  }
+  public destroy() { this.two.pause(); this.two.renderer.domElement.remove(); this.thumbTwo.renderer.domElement.remove(); }
 }
