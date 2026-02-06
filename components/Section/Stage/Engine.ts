@@ -13,10 +13,6 @@ export class CanvasEngine {
   tool: Tool = 'select';
   settings!: ToolSettings;
 
-  // Offscreen canvas for hit-testing
-  offscreenCanvas: HTMLCanvasElement;
-  offscreenCtx: CanvasRenderingContext2D;
-
   // Callbacks
   onToolChange?: (tool: Tool) => void;
   onAnchorSelect?: (isSelected: boolean) => void;
@@ -74,9 +70,6 @@ export class CanvasEngine {
       domElement: thumbCanvas,
       autostart: false
     });
-
-    this.offscreenCanvas = document.createElement('canvas');
-    this.offscreenCtx = this.offscreenCanvas.getContext('2d')!;
   }
 
   // --- CORE API ---
@@ -235,97 +228,42 @@ export class CanvasEngine {
     return { x: transformed.x, y: transformed.y };
   }
 
-  // --- CORE HIT TESTING ---
+  // --- CORE HIT TESTING (NEW & SIMPLIFIED) ---
+  
+  /**
+   * Finds the topmost shape at a given point on the canvas using simple bounding box checks.
+   * This is much faster and simpler than pixel-perfect detection but less accurate for
+   * non-rectangular or rotated shapes.
+   */
+  private findTopmostShapeAtPoint(group: Two.Group, canvasX: number, canvasY: number): any | null {
+      let hitObject: any = null;
 
-  private twoPathToPath2D(shape: Two.Path): Path2D {
-    const path2d = new Path2D();
-    if (!shape.vertices || shape.vertices.length === 0) {
-      return path2d;
-    }
-    shape.vertices.forEach((anchor, i) => {
-      switch (anchor.command) {
-        case Two.Commands.move:
-          path2d.moveTo(anchor.x, anchor.y);
-          break;
-        case Two.Commands.line:
-          path2d.lineTo(anchor.x, anchor.y);
-          break;
-        case Two.Commands.curve:
-          const prev = shape.vertices[i - 1];
-          if (!prev) return;
-          const x1 = prev.x + prev.controls.right.x;
-          const y1 = prev.y + prev.controls.right.y;
-          const x2 = anchor.x + anchor.controls.left.x;
-          const y2 = anchor.y + anchor.controls.left.y;
-          path2d.bezierCurveTo(x1, y1, x2, y2, anchor.x, anchor.y);
-          break;
-        case Two.Commands.close:
-          path2d.closePath();
-          break;
-      }
-    });
-    if (shape.closed) {
-      path2d.closePath();
-    }
-    return path2d;
-  }
+      const findRecursive = (children: Two.Object[]) => {
+          // Iterate backwards for Z-index (topmost first)
+          for (let i = children.length - 1; i >= 0; i--) {
+              const child = children[i];
+              // Stop searching if we found something or child is not visible
+              if (hitObject || !child.visible) continue;
 
-  private findTopmostShapeAt(group: Two.Group, sceneX: number, sceneY: number): any | null {
-    // Iterate backwards to find the topmost element
-    for (let i = group.children.length - 1; i >= 0; i--) {
-        const child = group.children[i];
-        if (!child.visible) continue;
+              if (child instanceof Two.Group) {
+                  findRecursive(child.children);
+              } else if (child instanceof Two.Shape) {
+                  // Use Two.js's built-in bounding box check in world coordinates.
+                  const bounds = child.getBoundingClientRect(true);
+                  if (
+                      canvasX >= bounds.left && canvasX <= bounds.right &&
+                      canvasY >= bounds.top && canvasY <= bounds.bottom
+                  ) {
+                      hitObject = child;
+                  }
+              }
+              // If a hit was found in a recursive call or this loop, stop.
+              if (hitObject) return;
+          }
+      };
 
-        // We need to check against the world bounding box.
-        // two.js getBoundingClientRect() is relative to top-left of canvas.
-        const bounds = child.getBoundingClientRect(true); // true for recursive
-        const clickX_topLeft = sceneX + this.two.width / 2;
-        const clickY_topLeft = sceneY + this.two.height / 2;
-
-        if (clickX_topLeft < bounds.left || clickX_topLeft > bounds.right || clickY_topLeft < bounds.top || clickY_topLeft > bounds.bottom) {
-            continue; // Not even in the bounding box, skip.
-        }
-
-        // If it's a group, we prefer a deeper hit inside it.
-        if (child instanceof Two.Group) {
-            const hitInGroup = this.findTopmostShapeAt(child as Two.Group, sceneX, sceneY);
-            // If we found a specific shape, return it. Otherwise, we've hit the group.
-            return hitInGroup || child;
-        }
-
-        // If we are here, it's a shape. Do a precise check.
-        if (child instanceof Two.Shape) {
-            const worldMatrix = this.getGlobalMatrix(child);
-            const inverseMatrix = worldMatrix.clone().inverse();
-            if (!inverseMatrix) continue;
-            
-            const localPoint = inverseMatrix.multiply(sceneX, sceneY, 1);
-            
-            let pathForTest: Two.Path;
-            if (child instanceof Two.Path) {
-                pathForTest = child;
-            } else if (typeof (child as any).toPath === 'function') {
-                pathForTest = (child as any).toPath((child as any).closed !== false);
-            } else {
-                continue;
-            }
-            const path2d = this.twoPathToPath2D(pathForTest);
-            this.offscreenCtx.setTransform(1, 0, 0, 1, 0, 0);
-            this.offscreenCtx.lineWidth = child.linewidth || 0;
-            let hit = false;
-            if (child.fill && child.fill !== 'transparent' && child.fill !== 'none') {
-                if (this.offscreenCtx.isPointInPath(path2d, localPoint.x, localPoint.y)) hit = true;
-            }
-            if (!hit && child.stroke && child.stroke !== 'transparent' && child.stroke !== 'none' && child.linewidth > 0) {
-                if (this.offscreenCtx.isPointInStroke(path2d, localPoint.x, localPoint.y)) hit = true;
-            }
-
-            if (hit) {
-                return child; // Precise hit on a shape
-            }
-        }
-    }
-    return null;
+      findRecursive(group.children);
+      return hitObject;
   }
 
   public tryEnterEditMode(x: number, y: number): boolean {
@@ -333,9 +271,10 @@ export class CanvasEngine {
     const rootGroup = this.groups.get(this.activeLayerId);
     if (!rootGroup) return false;
     this.two.update();
-    const sceneX = x - this.two.width / 2;
-    const sceneY = y - this.two.height / 2;
-    const hitObject = this.findTopmostShapeAt(rootGroup, sceneX, sceneY);
+
+    const hitObject = this.findTopmostShapeAtPoint(rootGroup, x, y);
+
+    // We only want to edit raw paths
     if (hitObject && hitObject instanceof Two.Path) {
         this.penPath = hitObject as Two.Path;
         this.selectedShape = null;
@@ -476,9 +415,7 @@ export class CanvasEngine {
 
   private handleDelete(group: Two.Group, x: number, y: number) {
     this.two.update();
-    const sceneX = x - this.two.width / 2;
-    const sceneY = y - this.two.height / 2;
-    const hitObject = this.findTopmostShapeAt(group, sceneX, sceneY);
+    const hitObject = this.findTopmostShapeAtPoint(group, x, y);
 
     if (hitObject) {
       hitObject.remove();
@@ -489,15 +426,13 @@ export class CanvasEngine {
   private handleSelect(group: Two.Group, x: number, y: number) {
     this.selectedShape = null;
     this.two.update();
-    const sceneX = x - this.two.width / 2;
-    const sceneY = y - this.two.height / 2;
 
-    const deepHit = this.findTopmostShapeAt(group, sceneX, sceneY);
+    const hitObject = this.findTopmostShapeAtPoint(group, x, y);
 
-    if (deepHit) {
-      this.selectShape(deepHit);
-      const local = this.toLocal(deepHit.parent, x, y);
-      this.dragOffset = { x: local.x - deepHit.translation.x, y: local.y - deepHit.translation.y };
+    if (hitObject) {
+      this.selectShape(hitObject);
+      const local = this.toLocal(hitObject.parent, x, y);
+      this.dragOffset = { x: local.x - hitObject.translation.x, y: local.y - hitObject.translation.y };
       return;
     }
     
