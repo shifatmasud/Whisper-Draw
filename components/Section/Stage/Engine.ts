@@ -1,5 +1,3 @@
-
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -7,7 +5,7 @@
 // FIX: Changed import to a namespace import to fix type resolution issues.
 import * as Two from 'two.js';
 import paper from 'paper';
-import { Layer, Tool, ToolSettings, SelectedObjectType } from '../../../types/index.tsx';
+import { Layer, Tool, ToolSettings, SelectedObjectType, ShapeType } from '../../../types/index.tsx';
 import { twoMatrixToPaperMatrix, normalizeImportedContent } from './PathUtils.ts';
 
 export class CanvasEngine {
@@ -48,7 +46,7 @@ export class CanvasEngine {
   // Build Mode
   buildState = {
     isActive: false,
-    shards: [] as { two: Two.Path, paper: paper.PathItem }[],
+    shards: [] as { two: Two.Shape, paper: paper.PathItem }[],
     originalShapes: [] as any[],
     lassoPath: null as Two.Path | null,
     lassoPoints: [] as {x: number, y: number}[],
@@ -741,47 +739,106 @@ export class CanvasEngine {
     else leaf(s);
   }
   
+  /**
+   * Converts a Two.js shape into a Paper.js PathItem using SVG as an intermediary.
+   * This is robust for all shape types, including primitives.
+   * @param twoShape The Two.js shape to convert.
+   * @returns A Paper.js PathItem, or null on failure.
+   */
   private twoShapeToPaperPath(twoShape: any): paper.PathItem | null {
-      this.paperScope.project.activeLayer.removeChildren();
-      if (!twoShape || !(twoShape instanceof (Two as any).Path)) return null;
-      
-      const twoMatrix = this.getGlobalMatrix(twoShape);
-      const paperMatrix = twoMatrixToPaperMatrix(twoMatrix, this.paperScope);
-      
-      const path = new this.paperScope.Path();
-      twoShape.vertices.forEach((v: any, i: number) => {
-          if (i === 0) {
-              path.moveTo(new this.paperScope.Point(v.x, v.y));
-          } else {
-              const prev = twoShape.vertices[i - 1];
-              const handle1 = new this.paperScope.Point(prev.x + prev.controls.right.x, prev.y + prev.controls.right.y);
-              const handle2 = new this.paperScope.Point(v.x + v.controls.left.x, v.y + v.controls.left.y);
-              const point = new this.paperScope.Point(v.x, v.y);
-              path.cubicCurveTo(handle1, handle2, point);
-          }
-      });
-      if (twoShape.closed) path.closed = true;
-      path.transform(paperMatrix);
-      return path;
+    this.paperScope.project.activeLayer.removeChildren();
+    if (!twoShape) return null;
+
+    // Use a temporary in-memory SVG renderer with Two.js
+    const tempTwo = new (Two as any)({
+      type: (Two as any).Types.svg,
+      width: 1, height: 1 // Dimensions aren't critical
+    });
+
+    const clone = twoShape.clone();
+    
+    // Get the shape's world matrix to be applied later in Paper.js
+    const worldMatrix = this.getGlobalMatrix(twoShape);
+    
+    // Export the clone with a clean identity matrix
+    clone.matrix.identity();
+    tempTwo.add(clone);
+    tempTwo.update();
+
+    const svgString = tempTwo.renderer.domElement.outerHTML;
+    
+    if (!svgString) return null;
+    
+    // Import the SVG string into Paper.js
+    // expandShapes is crucial for converting primitives like <rect> into paths for boolean ops
+    const item = this.paperScope.project.importSVG(svgString, { expandShapes: true });
+    
+    if (!item) return null;
+
+    // Now, apply the original world transformation to the imported Paper.js item
+    const paperMatrix = twoMatrixToPaperMatrix(worldMatrix, this.paperScope);
+    item.transform(paperMatrix);
+    
+    // Often, a single shape will be imported within a group, so we try to simplify.
+    let pathItem: paper.PathItem | null = null;
+    if (item instanceof this.paperScope.PathItem) { // PathItem is base for Path, CompoundPath
+        pathItem = item;
+    } else if (item instanceof this.paperScope.Group && item.children.length > 0) {
+        // If it's a group of paths, compound it for easier boolean operations
+        const compound = new this.paperScope.CompoundPath({
+            children: item.children.filter(c => c instanceof this.paperScope.PathItem),
+            fillRule: 'evenodd',
+        });
+        item.remove(); // clean up the group wrapper
+        pathItem = compound;
+    }
+    
+    return pathItem;
   }
 
-  private paperPathToTwoShape(paperPath: paper.PathItem, parentGroup: Two.Group): Two.Path {
-      const matrix = twoMatrixToPaperMatrix(this.getGlobalMatrix(parentGroup), this.paperScope).inverted();
-// FIX: The transform method returns void, so clone and transform must be separate operations.
-      const cloned = paperPath.clone();
-      cloned.transform(matrix);
+  /**
+   * Converts a Paper.js path back into a Two.js shape using SVG as an intermediary.
+   * @param paperPath The Paper.js item to convert.
+   * @param parentGroup The target Two.js group for the new shape.
+   * @returns A Two.Shape (typically a Two.Group or Two.Path).
+   */
+  private paperPathToTwoShape(paperPath: paper.PathItem, parentGroup: Two.Group): Two.Shape {
+      // Export Paper.js item to an SVG string.
+      const svgString = (paperPath as any).exportSVG({ asString: true });
       
-      const anchors: any[] = [];
-      cloned.segments.forEach(s => {
-          anchors.push(new (Two as any).Anchor(s.point.x, s.point.y, s.handleIn.x, s.handleIn.y, s.handleOut.x, s.handleOut.y));
-      });
+      // Create a DOM node from the string for Two.js to interpret.
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = svgString;
+      const svgNode = tempDiv.querySelector('svg');
+
+      if (!svgNode) {
+          return new (Two as any).Path([], false, false); // Return empty path on failure
+      }
+
+      // Synchronously interpret the SVG node. This adds the result to the main scene.
+      const loadedShape = this.two.interpret(svgNode);
+      // Immediately remove it from the main scene to manage it manually.
+      loadedShape.remove();
+
+      // We now have the shape with its world matrix from the SVG.
+      // We need to convert this to a local matrix relative to its new parent.
+      // M_local = M_parent_inverse * M_world
+      const parentMatrixInv = this.getGlobalMatrix(parentGroup).clone().invert();
+      if (parentMatrixInv) {
+        loadedShape.matrix.premultiply(parentMatrixInv);
+      }
       
-      const twoPath = new (Two as any).Path(anchors, cloned.closed, true);
-      twoPath.fill = paperPath.fillColor ? paperPath.fillColor.toCSS(true) : 'transparent';
-      twoPath.stroke = paperPath.strokeColor ? paperPath.strokeColor.toCSS(true) : 'transparent';
-      twoPath.linewidth = paperPath.strokeWidth ?? 1;
-      cloned.remove();
-      return twoPath;
+      // The result of interpretation is always a Two.Group.
+      // If it contains just one path, we can simplify and return the path directly.
+      if (loadedShape.children.length === 1 && loadedShape.children[0] instanceof (Two as any).Path) {
+          const child = loadedShape.children[0];
+          // The child's matrix is local to the group. We need to apply the group's new local matrix to it.
+          child.matrix.premultiply(loadedShape.matrix);
+          loadedShape.remove(child);
+          return child;
+      }
+
+      return loadedShape;
   }
 
 
@@ -808,12 +865,20 @@ export class CanvasEngine {
     }
 
     const items = combined.children ? [...combined.children] : [combined];
-// FIX: Cast item to paper.PathItem to satisfy function signatures and type definitions.
     this.buildState.shards = items.map(item => {
         const twoShard = this.paperPathToTwoShape(item as paper.PathItem, this.buildState.container!);
-        twoShard.fill = '#007bff33';
-        twoShard.stroke = '#007bff';
-        twoShard.linewidth = 1;
+        
+        const applyShardStyle = (s: any) => {
+            if (s instanceof (Two as any).Group) {
+                s.children.forEach(applyShardStyle);
+            } else {
+                s.fill = '#007bff33';
+                s.stroke = '#007bff';
+                s.linewidth = 1;
+            }
+        };
+        applyShardStyle(twoShard);
+
         this.buildState.container!.add(twoShard);
         return { two: twoShard, paper: item as paper.PathItem };
     });
@@ -889,9 +954,18 @@ export class CanvasEngine {
     
     finalPaperShapes.forEach(shape => {
       const twoShape = this.paperPathToTwoShape(shape, group);
-      twoShape.fill = this.settings.fillColor;
-      twoShape.stroke = this.settings.strokeColor;
-      twoShape.linewidth = this.settings.strokeWidth;
+
+      const applyFinalStyle = (s: any) => {
+          if (s instanceof (Two as any).Group) {
+              s.children.forEach(applyFinalStyle);
+          } else if (s instanceof (Two as any).Path) { // Check if it's a drawable shape
+              s.fill = this.settings.fillColor;
+              s.stroke = this.settings.strokeColor;
+              s.linewidth = this.settings.strokeWidth;
+          }
+      };
+      applyFinalStyle(twoShape);
+
       group.add(twoShape);
     });
 
