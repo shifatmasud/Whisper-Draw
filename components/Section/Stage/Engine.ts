@@ -222,7 +222,7 @@ export class CanvasEngine {
 
   private toLocal(obj: any, sceneX: number, sceneY: number) {
     const globalMatrix = this.getGlobalMatrix(obj);
-    const m = globalMatrix.clone().invert();
+    const m = globalMatrix.clone().inverse();
     
     if (!m) return { x: sceneX, y: sceneY };
 
@@ -522,7 +522,7 @@ export class CanvasEngine {
 
     this.two.update();
 
-    const parentWorldInverse = this.getGlobalMatrix(parent).clone().invert();
+    const parentWorldInverse = this.getGlobalMatrix(parent).clone().inverse();
     if (!parentWorldInverse) return;
     
     const children = [...group.children];
@@ -822,7 +822,7 @@ export class CanvasEngine {
       // We now have the shape with its world matrix from the SVG.
       // We need to convert this to a local matrix relative to its new parent.
       // M_local = M_parent_inverse * M_world
-      const parentMatrixInv = this.getGlobalMatrix(parentGroup).clone().invert();
+      const parentMatrixInv = this.getGlobalMatrix(parentGroup).clone().inverse();
       if (parentMatrixInv) {
         loadedShape.matrix.premultiply(parentMatrixInv);
       }
