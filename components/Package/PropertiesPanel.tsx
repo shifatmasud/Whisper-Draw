@@ -1,4 +1,5 @@
 
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -110,9 +111,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             <motion.div key="tool" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }} style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing['Space.M'] }}>
               {activeTool === 'select' && (
                   <>
-                    <div style={groupStyle}>
-                        <Select label="Selection Mode" value={toolSettings.selectionMode} onChange={(e) => onSettingChange('selectionMode', e.target.value)} options={[{ value: 'vector', label: 'Vector (Deep Select)' }, { value: 'layer', label: 'Layer (Group Select)' }]} />
-                    </div>
                     {selectedObjectType && (
                         <>
                             <div style={groupStyle}>

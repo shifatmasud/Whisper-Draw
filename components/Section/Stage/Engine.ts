@@ -239,36 +239,55 @@ export class CanvasEngine {
 
   // --- CORE HIT TESTING ---
 
+  private findTopmostShapeAt(group: Two.Group, sceneX: number, sceneY: number): any | null {
+    // Reverse loop to check from top-to-bottom z-index
+    for (let i = group.children.length - 1; i >= 0; i--) {
+      const child = group.children[i];
+      if (!child.visible) continue;
+
+      // If child is a group, recurse. If it returns a hit, we're done.
+      if (child instanceof Two.Group) {
+          const hitInGroup = this.findTopmostShapeAt(child as Two.Group, sceneX, sceneY);
+          if (hitInGroup) {
+              return hitInGroup;
+          }
+      }
+      
+      if (!(child instanceof Two.Shape)) continue;
+
+      // It's a shape, perform hit test by transforming the point into the shape's local space
+      
+      // Get matrix to transform from world (scene) to child's local space
+      const worldToLocalMatrix = (this.getGlobalMatrix(child).clone() as any).inverse();
+      if (!worldToLocalMatrix) continue;
+
+      // Transform the mouse point from scene (world) space to the shape's local space
+      const localMouse = worldToLocalMatrix.multiply(sceneX, sceneY, 1);
+      
+      // Get the shape's bounding box in its own local coordinates
+      const localBounds = child.getBoundingClientRect(false); // shallow = false
+
+      if (localMouse.x >= localBounds.left && localMouse.x <= localBounds.right &&
+          localMouse.y >= localBounds.top && localMouse.y <= localBounds.bottom) {
+          return child;
+      }
+    }
+    return null;
+  }
+
   public tryEnterEditMode(x: number, y: number): boolean {
     if (!this.activeLayerId) return false;
     const rootGroup = this.groups.get(this.activeLayerId);
     if (!rootGroup) return false;
 
     this.two.update();
-
-    const canvasRect = this.canvasRect;
-    const viewportX = x + canvasRect.left;
-    const viewportY = y + canvasRect.top;
-
-    const findPathAtPoint = (g: Two.Group, targetX: number, targetY: number): Two.Path | null => {
-        for (let i = g.children.length - 1; i >= 0; i--) {
-            const child = g.children[i];
-            if (child instanceof Two.Path) {
-                const bounds = child.getBoundingClientRect();
-                if (targetX >= bounds.left && targetX <= bounds.right && targetY >= bounds.top && targetY <= bounds.bottom) {
-                    return child as Two.Path;
-                }
-            } else if (child instanceof Two.Group) {
-                const found = findPathAtPoint(child as Two.Group, targetX, targetY);
-                if (found) return found;
-            }
-        }
-        return null;
-    };
-
-    const path = findPathAtPoint(rootGroup, viewportX, viewportY);
-    if (path) {
-        this.penPath = path;
+    const sceneX = x - this.two.width / 2;
+    const sceneY = y - this.two.height / 2;
+    
+    const hitObject = this.findTopmostShapeAt(rootGroup, sceneX, sceneY);
+    
+    if (hitObject && hitObject instanceof Two.Path) {
+        this.penPath = hitObject as Two.Path;
         this.selectedShape = null;
         if (this.transformGroup) { this.two.remove(this.transformGroup); this.transformGroup = null; }
         this.updateAnchorSelection(-1);
@@ -324,7 +343,7 @@ export class CanvasEngine {
     const now = Date.now();
     if (now - this.lastClickTime < 300) {
       if (this.tool === 'pen') { this.finishPath(); this.lastClickTime = 0; return; }
-      if (this.tool === 'select' && this.selectedShape && this.settings.selectionMode === 'vector') {
+      if (this.tool === 'select' && this.selectedShape) {
           if (this.tryEnterEditMode(rawX, rawY)) { this.lastClickTime = 0; return; }
       }
     }
@@ -401,38 +420,32 @@ export class CanvasEngine {
   // --- INTERACTION LOGIC ---
 
   private handleDelete(group: Two.Group, x: number, y: number) {
-    const canvasRect = this.canvasRect;
-    const viewportX = x + canvasRect.left;
-    const viewportY = y + canvasRect.top;
+    this.two.update();
+    const sceneX = x - this.two.width / 2;
+    const sceneY = y - this.two.height / 2;
+    const hitObject = this.findTopmostShapeAt(group, sceneX, sceneY);
 
-    for (let i = group.children.length - 1; i >= 0; i--) {
-      const child = group.children[i];
-      const bounds = child.getBoundingClientRect();
-      if (viewportX >= bounds.left && viewportX <= bounds.right && viewportY >= bounds.top && viewportY <= bounds.bottom) {
-        child.remove();
-        if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
-        break;
-      }
+    if (hitObject) {
+      hitObject.remove();
+      if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
     }
   }
 
   private handleSelect(group: Two.Group, x: number, y: number) {
     this.selectedShape = null;
+    this.two.update();
+    const sceneX = x - this.two.width / 2;
+    const sceneY = y - this.two.height / 2;
 
-    const canvasRect = this.canvasRect;
-    const viewportX = x + canvasRect.left;
-    const viewportY = y + canvasRect.top;
-    
-    for (let i = group.children.length - 1; i >= 0; i--) {
-      const child = group.children[i];
-      const bounds = child.getBoundingClientRect();
-      if (viewportX >= bounds.left && viewportX <= bounds.right && viewportY >= bounds.top && viewportY <= bounds.bottom) {
-        this.selectShape(child);
-        const local = this.toLocal(child.parent, x, y);
-        this.dragOffset = { x: local.x - child.translation.x, y: local.y - child.translation.y };
-        return;
-      }
+    const deepHit = this.findTopmostShapeAt(group, sceneX, sceneY);
+
+    if (deepHit) {
+      this.selectShape(deepHit);
+      const local = this.toLocal(deepHit.parent, x, y);
+      this.dragOffset = { x: local.x - deepHit.translation.x, y: local.y - deepHit.translation.y };
+      return;
     }
+    
     this.onSelectionTypeChange?.(null);
     this.updateSelectionHandles();
   }

@@ -1,4 +1,5 @@
 
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -44,7 +45,6 @@ const MetaPrototype = () => {
     lineJoin: 'round',
     strokeEnabled: true,
     fillEnabled: true,
-    selectionMode: 'vector',
     penHandleMode: 'mirrored',
     penClosePath: false,
     // Shape Tool Defaults
@@ -452,6 +452,7 @@ const MetaPrototype = () => {
               onContentDragStart={handleContentDragStart}
               onContentDragEnd={handleContentDragEnd}
               onGroupSelection={handleGroupSelection}
+              // FIX: Cannot find name 'onUngroup'. Changed to 'handleUngroup'.
               onUngroup={handleUngroup}
               onMoveLayer={handleMoveLayer}
             />
