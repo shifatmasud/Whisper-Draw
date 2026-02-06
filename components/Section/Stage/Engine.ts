@@ -231,8 +231,36 @@ export class CanvasEngine {
   }
 
   public tryEnterEditMode(x: number, y: number): boolean {
-    // This simplified version no longer works well without pixel-perfect hit test.
-    // For now, double-click to edit will require clicking very near the path.
+    if (!this.selectedShape) {
+      return false;
+    }
+
+    // Use bounding box for hit detection on double click
+    const bounds = this.selectedShape.getBoundingClientRect();
+    if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) {
+        return false;
+    }
+    
+    // Groups cannot be edited with the pen tool directly.
+    if (this.selectedShape instanceof Two.Group) {
+      return false;
+    }
+
+    // Convert primitive shapes to an editable path upon entering edit mode.
+    if (!(this.selectedShape instanceof Two.Path)) {
+        this.flattenSelectedShape();
+    }
+
+    // If we have a path (either pre-existing or just converted), switch to Pen tool.
+    if (this.selectedShape instanceof Two.Path) {
+        this.penPath = this.selectedShape;
+        this.setTool('pen');
+        this.onToolChange?.('pen'); // Notify React UI of the tool change.
+        this.updateAnchorSelection(0); // Default to selecting the first anchor.
+        this.updatePenHelpers(); // Display the anchors and handles.
+        return true; // Successfully entered edit mode.
+    }
+
     return false;
   }
 
