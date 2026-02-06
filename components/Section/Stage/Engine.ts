@@ -1,4 +1,5 @@
 
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -204,15 +205,15 @@ export class CanvasEngine {
 
   // --- COORDINATE HELPERS ---
 
-  /**
-   * Gets the matrix relative to the Scene root.
-   * This ignores the scene's own translation which is used for centering.
-   */
+  private get canvasRect(): DOMRect {
+    return this.two.renderer.domElement.getBoundingClientRect();
+  }
+
   public getGlobalMatrix(obj: any): Two.Matrix {
     const matrix = new Two.Matrix();
     const stack: any[] = [];
     let current = obj;
-    while (current && !(current instanceof Two.Scene)) {
+    while (current) {
       stack.push(current);
       current = current.parent;
     }
@@ -236,57 +237,36 @@ export class CanvasEngine {
     return { x: transformed.x, y: transformed.y };
   }
 
-  // --- ROBUST HIT TESTING ---
+  // --- CORE HIT TESTING ---
 
-  /**
-   * Performs hit testing in scene space.
-   * Compares the scene-relative coordinate against the object's local vertex bounds.
-   */
-  private hitTest(obj: any, sceneX: number, sceneY: number): boolean {
-    if (!obj.visible) return false;
-    
-    // Map scene point into object's local space
-    const globalMatrix = this.getGlobalMatrix(obj);
-    const mInv = (globalMatrix.clone() as any).inverse();
-    if (!mInv) return false;
-    
-    const local = mInv.multiply(sceneX, sceneY, 1);
-    
-    // Get local bounds of vertices (shallow=true excludes transformation of the object itself)
-    const bounds = obj.getBoundingClientRect(true);
-    
-    return (
-      local.x >= bounds.left &&
-      local.x <= bounds.right &&
-      local.y >= bounds.top &&
-      local.y <= bounds.bottom
-    );
-  }
-
-  public tryEnterEditMode(canvasX: number, canvasY: number): boolean {
+  public tryEnterEditMode(x: number, y: number): boolean {
     if (!this.activeLayerId) return false;
     const rootGroup = this.groups.get(this.activeLayerId);
     if (!rootGroup) return false;
 
-    const sceneX = canvasX - this.two.width / 2;
-    const sceneY = canvasY - this.two.height / 2;
+    this.two.update();
 
-    const findPathAtPoint = (g: Two.Group): Two.Path | null => {
+    const canvasRect = this.canvasRect;
+    const viewportX = x + canvasRect.left;
+    const viewportY = y + canvasRect.top;
+
+    const findPathAtPoint = (g: Two.Group, targetX: number, targetY: number): Two.Path | null => {
         for (let i = g.children.length - 1; i >= 0; i--) {
             const child = g.children[i];
             if (child instanceof Two.Path) {
-                if (this.hitTest(child, sceneX, sceneY)) {
-                  return child as Two.Path;
+                const bounds = child.getBoundingClientRect();
+                if (targetX >= bounds.left && targetX <= bounds.right && targetY >= bounds.top && targetY <= bounds.bottom) {
+                    return child as Two.Path;
                 }
             } else if (child instanceof Two.Group) {
-                const found = findPathAtPoint(child as Two.Group);
+                const found = findPathAtPoint(child as Two.Group, targetX, targetY);
                 if (found) return found;
             }
         }
         return null;
     };
 
-    const path = findPathAtPoint(rootGroup);
+    const path = findPathAtPoint(rootGroup, viewportX, viewportY);
     if (path) {
         this.penPath = path;
         this.selectedShape = null;
@@ -353,9 +333,6 @@ export class CanvasEngine {
     if (!this.activeLayerId) return;
     const group = this.groups.get(this.activeLayerId);
     if (!group) return;
-
-    const sceneX = rawX - this.two.width / 2;
-    const sceneY = rawY - this.two.height / 2;
     
     if (this.tool === 'shape' && this.settings.shapeMode === 'build' && this.buildState.isActive) {
       this.isInteracting = true;
@@ -368,9 +345,9 @@ export class CanvasEngine {
 
     this.isInteracting = true;
     if (this.tool === 'delete') { 
-        this.handleDelete(group, sceneX, sceneY); 
+        this.handleDelete(group, rawX, rawY); 
     } else if (this.tool === 'select') { 
-        this.handleSelect(group, sceneX, sceneY); 
+        this.handleSelect(group, rawX, rawY); 
     } else if (this.tool === 'pen') { 
         this.handlePenDown(rawX, rawY, group); 
     } else if (this.tool === 'brush') { 
@@ -421,12 +398,17 @@ export class CanvasEngine {
     }
   }
 
-  // --- INTERACTION LOGIC (INTERNAL COORDINATES) ---
+  // --- INTERACTION LOGIC ---
 
-  private handleDelete(group: Two.Group, sceneX: number, sceneY: number) {
+  private handleDelete(group: Two.Group, x: number, y: number) {
+    const canvasRect = this.canvasRect;
+    const viewportX = x + canvasRect.left;
+    const viewportY = y + canvasRect.top;
+
     for (let i = group.children.length - 1; i >= 0; i--) {
       const child = group.children[i];
-      if (this.hitTest(child, sceneX, sceneY)) {
+      const bounds = child.getBoundingClientRect();
+      if (viewportX >= bounds.left && viewportX <= bounds.right && viewportY >= bounds.top && viewportY <= bounds.bottom) {
         child.remove();
         if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
         break;
@@ -434,16 +416,19 @@ export class CanvasEngine {
     }
   }
 
-  private handleSelect(group: Two.Group, sceneX: number, sceneY: number) {
+  private handleSelect(group: Two.Group, x: number, y: number) {
     this.selectedShape = null;
 
+    const canvasRect = this.canvasRect;
+    const viewportX = x + canvasRect.left;
+    const viewportY = y + canvasRect.top;
+    
     for (let i = group.children.length - 1; i >= 0; i--) {
       const child = group.children[i];
-      if (this.hitTest(child, sceneX, sceneY)) {
+      const bounds = child.getBoundingClientRect();
+      if (viewportX >= bounds.left && viewportX <= bounds.right && viewportY >= bounds.top && viewportY <= bounds.bottom) {
         this.selectShape(child);
-        const globalMatrix = this.getGlobalMatrix(child.parent);
-        const mInv = (globalMatrix.clone() as any).inverse();
-        const local = mInv ? mInv.multiply(sceneX, sceneY, 1) : { x: sceneX, y: sceneY };
+        const local = this.toLocal(child.parent, x, y);
         this.dragOffset = { x: local.x - child.translation.x, y: local.y - child.translation.y };
         return;
       }
@@ -492,52 +477,32 @@ export class CanvasEngine {
     this.onSelectionTypeChange?.(type);
   }
 
-  /**
-   * Updates visual selection handles using scene coordinates.
-   */
   private updateSelectionHandles() {
     if (this.transformGroup) { this.two.remove(this.transformGroup); this.transformGroup = null; }
     if (!this.selectedShape || this.tool !== 'select') return;
     
-    // Get Local bounds (the "raw" geometry)
-    const localBounds = this.selectedShape.getBoundingClientRect(true);
-    const globalMatrix = this.getGlobalMatrix(this.selectedShape);
-
-    // Project local corners to scene space
-    const corners = [
-        { x: localBounds.left, y: localBounds.top },
-        { x: localBounds.right, y: localBounds.top },
-        { x: localBounds.right, y: localBounds.bottom },
-        { x: localBounds.left, y: localBounds.bottom }
-    ].map(p => globalMatrix.multiply(p.x, p.y, 1));
-
-    // Determine Scene BBox from projected corners
-    const minX = Math.min(...corners.map(c => c.x));
-    const maxX = Math.max(...corners.map(c => c.x));
-    const minY = Math.min(...corners.map(c => c.y));
-    const maxY = Math.max(...corners.map(c => c.y));
-    const width = maxX - minX;
-    const height = maxY - minY;
-
+    this.two.update(); 
+    const bounds = this.selectedShape.getBoundingClientRect();
     const group = new Two.Group(); 
     this.transformGroup = group;
     
-    const cx = minX + width / 2;
-    const cy = minY + height / 2;
+    const cx = bounds.left + bounds.width/2 - this.two.width/2;
+    const cy = bounds.top + bounds.height/2 - this.two.height/2;
     
-    const rect = new Two.Rectangle(cx, cy, width + 10, height + 10);
+    const rect = new Two.Rectangle(cx, cy, bounds.width + 10, bounds.height + 10);
     rect.noFill(); 
     rect.stroke = '#1565C0'; 
     rect.linewidth = 2; 
     group.add(rect);
 
-    // Handle circles at corners in scene space
-    [
-        { x: minX - 5, y: minY - 5 },
-        { x: maxX + 5, y: minY - 5 },
-        { x: maxX + 5, y: maxY + 5 },
-        { x: minX - 5, y: maxY + 5 }
-    ].forEach(p => {
+    const handlePoints = [
+        {x: bounds.left - 5 - this.two.width/2, y: bounds.top - 5 - this.two.height/2},
+        {x: bounds.right + 5 - this.two.width/2, y: bounds.top - 5 - this.two.height/2},
+        {x: bounds.right + 5 - this.two.width/2, y: bounds.bottom + 5 - this.two.height/2},
+        {x: bounds.left - 5 - this.two.width/2, y: bounds.bottom + 5 - this.two.height/2}
+    ];
+
+    handlePoints.forEach(p => {
       const h = new Two.Circle(p.x, p.y, 5); 
       h.fill = '#FFFFFF'; 
       h.stroke = '#1565C0'; 
@@ -631,7 +596,11 @@ export class CanvasEngine {
     const h = new Two.Group(); 
     this.penHelpers = h;
     const matrix = this.getGlobalMatrix(this.penPath);
-    h.matrix.copy(matrix);
+    const sceneMatrixInv = (this.getGlobalMatrix(this.two.scene).clone() as any).inverse();
+    if (sceneMatrixInv) {
+        const localToScene = sceneMatrixInv.clone().multiply(matrix);
+        h.matrix.copy(localToScene);
+    }
     
     this.penPath.vertices.forEach((v: any, i: number) => {
       const sel = i === this.selectedAnchorIdx;
