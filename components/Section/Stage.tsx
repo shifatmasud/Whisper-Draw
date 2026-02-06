@@ -327,53 +327,23 @@ class CanvasEngine {
             console.warn('No active layer to import SVG into.');
             return;
         }
-        const targetGroup = this.groups.get(this.activeLayerId);
-        if (!targetGroup) {
+        const group = this.groups.get(this.activeLayerId);
+        if (!group) {
             console.warn('Active layer group not found.');
             return;
         }
-
+        
+        // Two.js's `load` method can take an SVG string directly.
         this.two.load(svgString, (loadedGroup) => {
-            if (!loadedGroup) return;
-
-            loadedGroup.center();
-            loadedGroup.translation.set(0, 0);
-
-            const collectShapes = (node: Two.Group | Two.Shape, collection: Two.Shape[]) => {
-                if (node instanceof Two.Group) {
-                    node.children.forEach(child => collectShapes(child, collection));
-                } else if (node instanceof Two.Shape) {
-                    collection.push(node);
-                }
-            };
-
-            const shapes: Two.Shape[] = [];
-            collectShapes(loadedGroup, shapes);
-
-            shapes.forEach(shape => {
-                const worldMatrix = new Two.Matrix();
-                let current: any = shape;
-                while (current && current.matrix) {
-                    worldMatrix.premultiply(current.matrix);
-                    current = current.parent;
-                }
-
-                const targetInverseMatrix = new Two.Matrix();
-                current = targetGroup;
-                while(current && current.matrix) {
-                    targetInverseMatrix.premultiply(current.matrix);
-                    current = current.parent;
-                }
-                targetInverseMatrix.inverse();
-
-                const newLocalMatrix = targetInverseMatrix.multiply(worldMatrix.elements);
-
-                targetGroup.add(shape);
-                shape.matrix.copy(newLocalMatrix);
-            });
-            
-            this.selectShape(null);
-            if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
+            if (loadedGroup) {
+                loadedGroup.center(); // Center its origin point
+                loadedGroup.translation.set(0, 0); // Position at the center of the parent group
+                
+                group.add(loadedGroup);
+                
+                this.selectShape(loadedGroup);
+                if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
+            }
         });
     }
 
