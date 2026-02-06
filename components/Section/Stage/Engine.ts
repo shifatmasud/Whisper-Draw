@@ -1,4 +1,5 @@
 
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -204,6 +205,10 @@ export class CanvasEngine {
 
   // --- COORDINATE HELPERS ---
 
+  private get canvasRect(): DOMRect {
+    return this.two.renderer.domElement.getBoundingClientRect();
+  }
+
   public getGlobalMatrix(obj: any): Two.Matrix {
     const matrix = new Two.Matrix();
     const stack: any[] = [];
@@ -221,11 +226,14 @@ export class CanvasEngine {
     return matrix;
   }
 
-  private toLocal(obj: any, globalX: number, globalY: number) {
+  private toLocal(obj: any, canvasX: number, canvasY: number) {
+    const sceneX = canvasX - this.two.width / 2;
+    const sceneY = canvasY - this.two.height / 2;
+
     const globalMatrix = this.getGlobalMatrix(obj);
     const m = (globalMatrix.clone() as any).inverse();
-    if (!m) return { x: globalX, y: globalY };
-    const transformed = m.multiply(globalX, globalY, 1);
+    if (!m) return { x: sceneX, y: sceneY };
+    const transformed = m.multiply(sceneX, sceneY, 1);
     return { x: transformed.x, y: transformed.y };
   }
 
@@ -237,6 +245,10 @@ export class CanvasEngine {
     if (!rootGroup) return false;
 
     this.two.update();
+
+    const canvasRect = this.canvasRect;
+    const viewportX = x + canvasRect.left;
+    const viewportY = y + canvasRect.top;
 
     const findPathAtPoint = (g: Two.Group, targetX: number, targetY: number): Two.Path | null => {
         for (let i = g.children.length - 1; i >= 0; i--) {
@@ -254,7 +266,7 @@ export class CanvasEngine {
         return null;
     };
 
-    const path = findPathAtPoint(rootGroup, x, y);
+    const path = findPathAtPoint(rootGroup, viewportX, viewportY);
     if (path) {
         this.penPath = path;
         this.selectedShape = null;
@@ -389,10 +401,14 @@ export class CanvasEngine {
   // --- INTERACTION LOGIC ---
 
   private handleDelete(group: Two.Group, x: number, y: number) {
+    const canvasRect = this.canvasRect;
+    const viewportX = x + canvasRect.left;
+    const viewportY = y + canvasRect.top;
+
     for (let i = group.children.length - 1; i >= 0; i--) {
       const child = group.children[i];
       const bounds = child.getBoundingClientRect();
-      if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
+      if (viewportX >= bounds.left && viewportX <= bounds.right && viewportY >= bounds.top && viewportY <= bounds.bottom) {
         child.remove();
         if (this.activeLayerId) this.generateThumbnail(this.activeLayerId);
         break;
@@ -402,10 +418,15 @@ export class CanvasEngine {
 
   private handleSelect(group: Two.Group, x: number, y: number) {
     this.selectedShape = null;
+
+    const canvasRect = this.canvasRect;
+    const viewportX = x + canvasRect.left;
+    const viewportY = y + canvasRect.top;
+    
     for (let i = group.children.length - 1; i >= 0; i--) {
       const child = group.children[i];
       const bounds = child.getBoundingClientRect();
-      if (x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom) {
+      if (viewportX >= bounds.left && viewportX <= bounds.right && viewportY >= bounds.top && viewportY <= bounds.bottom) {
         this.selectShape(child);
         const local = this.toLocal(child.parent, x, y);
         this.dragOffset = { x: local.x - child.translation.x, y: local.y - child.translation.y };
